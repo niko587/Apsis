@@ -17,7 +17,10 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   forbidOnly: !!process.env.CI,
-  reporter: 'list',
+  // The `github` reporter turns each failure into a `::error::` annotation.
+  // Raw job logs need admin rights on the repository; annotations do not, so
+  // this is the difference between a red badge and a readable diagnosis.
+  reporter: process.env.CI ? [['github'], ['list']] : [['list']],
   timeout: 90_000,
   expect: { timeout: 10_000 },
   use: {
