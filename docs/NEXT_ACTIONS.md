@@ -6,25 +6,62 @@ what, why now, acceptance, suggested model (spec §2)._
 **Closed since the last revision:**
 - GitHub bootstrap. Remote exists, `main` canonical, `/docs` browsable (D19).
 - **Browser reachability suite** — `e2e/reachability.spec.ts`, 8 tests across
-  3 viewports, green, and *proven* to catch D12 by reverting the rail (D20).
+  3 viewports, green locally, *proven* to catch D12 by reverting the rail (D20).
 - **CI** — `.github/workflows/ci.yml`, five gates on push/PR, badge in README.
+- **Performance diagnosis** — `docs/PERFORMANCE_BASELINE.md` (2026-09-15).
 
-Real-GPU verification is now the **only** blocked item, and the only one this
-machine cannot do. It is item 1 below and it needs you.
+**Open defect (not a product bug):** CI is red. The reachability suite's
+`inViewport` check demands *total* containment, and on the runner's Linux font
+metrics the last rail panel lands 2px past the viewport bottom while remaining
+genuinely reachable (`receivesPointer=true`, hit resolves to the `h2`). Passes
+on macOS, fails on the runner. Fix is to require the hit-tested point in the
+viewport rather than the whole box — still catches D12, whose failure had
+`top=1322 bottom=1350` against a 1000px viewport and `hitAt centre=null`.
 
-## 1. Real-GPU performance verification (§20) — BLOCKED on owner's machine
-**What:** Re-measure the FPS table (4,892 / 20k / 60k leads at ≥1600×1000)
-on real hardware; the sandbox is fill-rate-bound and cannot measure it.
-Also: confirm the Core shader fix reads smooth in motion (D15).
-**Why now:** it gates ordering. If 60k leads is slow on real hardware, the
-render path outranks every feature item below, and items 2–6 get re-sorted.
-Nothing below should be treated as settled priority until this is known.
-**How:** `npm run build && npx vite preview --port 4173`, then `?leads=20000`
-and `?leads=60000`; `?fx=off` isolates post-processing cost.
-**Acceptance:** README performance table either re-verified with new numbers
-or revised; "Unverified" caveats removed from README/`SELF-CRITIQUE.md`;
-verdict on §28 Q11 updated.
-**Model:** Opus (measurement discipline), owner present.
+The owner reports subjective grade **D** on a 2020 M1 MacBook Air. That is now
+the project's top priority. Round 1's hypothesis was refuted by real hardware;
+item 1 is the ~90-second run that ranks what is left.
+
+## 1. Run `?bench=1` on the M1 — BLOCKED on owner, ~90 seconds, decides the fix
+**What:** On the M1 MacBook Air, with the machine idle and a normal window:
+```
+http://localhost:4173/?bench=1                 # 4,892 leads, ~90s
+http://localhost:4173/?bench=1&leads=20000     # optional second pass
+```
+It walks nine configurations by itself and prints a copyable table. Check
+`chrome://gpu` first — **WebGL must say "Hardware accelerated"** — and note the
+GL_RENDERER string. Send the textarea contents back.
+**Why now:** the round-1 hypothesis (post-processing / fill rate) was **refuted**
+by the owner's own A/B: `?fx=off` gave only some improvement. The remaining
+suspects — sprite overdraw, the Core raymarch, CPU work, DPR — cannot be ranked
+on the measuring machine, because `?fx=off` there restores the full 60 fps cap
+and every subsequent row is pinned at vsync. On the Air they will separate.
+**Acceptance:** table pasted into `PERFORMANCE_BASELINE.md`; the largest
+adjacent jump names the bottleneck per the decision rules already written there
+(written in advance on purpose); round 1's section A formally closed.
+**Then, and only then:** implement the smallest fix the table points at. Every
+branch of those rules preserves the Lead Universe, the book size and the
+cinematic intent — none of them is "draw less of the product".
+**Model:** Opus. Fable only once the table says the fix is visual.
+
+## 1a. (closed) The `fx=off` A/B — RUN, hypothesis refuted
+Result: normal FX difficult to use; `?fx=off` some improvement, still difficult.
+Post-processing contributes; it is not primary. Recorded in
+`PERFORMANCE_BASELINE.md` round 2.
+
+## 1b. Free wins, safe to do regardless of the A/B outcome
+**What:** Baseline items 3 and 4 — precompute stage colours as RGB triples so
+no colour string is ever parsed in a hot path, and add an out-parameter
+`positionInto(lead, out)` so the frame path allocates nothing.
+**Why now:** `THREE.Color.setStyle` is the measured hottest JavaScript function
+in the app (273 ms/8 s at 60k leads, ~48% of non-rasterizer JS self-time), and
+`positionFor` allocates one object per lead per event. Both are small,
+behaviour-preserving, and independent of which bottleneck wins.
+**Acceptance:** no `Color.set(string)` or per-lead allocation on any per-frame
+or per-event path; visual output unchanged; unit tests still green; re-measured
+(the claim must be a measurement, not an assumption).
+**Model:** Opus. **Do not start before the project manager reviews the
+baseline.**
 
 ## 2. Prove the transport seam with a second source (replay)
 **What:** Implement a replay source (records a session's `LeadEvent`s to a

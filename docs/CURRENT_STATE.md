@@ -130,6 +130,55 @@ tracking.** Bootstrapped 2026-09-15; `NEXT_ACTIONS.md` item 1 is closed.
   matching the pre-existing isomorphic-git commit. There is no global
   identity on this machine.
 
+## Performance findings (2026-09-15) — see `PERFORMANCE_BASELINE.md`
+
+The owner reports subjective grade **D** (laggy/unusable) on a 2020 M1
+MacBook Air. A full diagnosis was run; **no optimization has been applied and
+no improvement is claimed.** Headlines:
+
+- **Leads are ONE `THREE.Points` draw call** — there are no per-lead React
+  components. 29–40 draw calls per frame at every book size. The usual suspect
+  for this symptom is disproven.
+- **`fx=off` is worth 4.2× at the default 4,892 leads** (2.1× at 20k, 2.6× at
+  60k). Bloom's fragment budget computes to ~4× the entire lead field's. GPU
+  fill rate is the **leading hypothesis** — but unprovable here, because this
+  machine's software rasterizer produces that signature regardless.
+- **The hottest JavaScript function in Apsis is a CSS colour-string parser.**
+  `THREE.Color.setStyle`, 273 ms/8 s at 60k leads (~48% of non-rasterizer JS
+  self-time), reached because `LeadField` rewalks the **whole book** on every
+  ingested event (~9/s) and re-parses `'#2f6bff'` per lead. `positionFor`
+  allocates one object per lead on the same path. Real, avoidable, scales
+  badly — but only ~2–3% of main-thread samples at the default book, so
+  probably not what makes the Air feel like D.
+- **Scaling is linear with no cliff** to 60k. The default book is not a
+  scaling problem, which points at fixed per-frame cost.
+- Measured with runtime-injected instrumentation (Playwright `addInitScript` +
+  CDP profiler); **no source file was modified to measure.**
+
+**Round 2 (same day): the fill-rate hypothesis was refuted on real hardware.**
+The owner's M1 result — normal FX difficult to use, `?fx=off` *some* improvement
+but still difficult — means post-processing contributes but is not primary. The
+two machines have genuinely different bottlenecks: here `fx=off` alone restores
+the 60 fps vsync cap (15.7 → 60.2), on the Air it barely helps. **No further
+measurement on this machine can identify the cause on that one.**
+
+So round 2 shipped an instrument rather than a second guess:
+`src/diag/diagnostics.ts` + `src/diag/DiagOverlay.tsx`, a subtractive harness
+(`?diag=1`, `?bench=1`, `?dpr=N`, `?field=off`, `?core=off`, `?feed=off`,
+`?anim=off`) that times `renderer.render()` against the frame interval to
+separate CPU from GPU, and walks the whole matrix automatically in ~90 s.
+**Every flag is off by default; a default page load is byte-identical to the
+shipping product** (verified: same 9 panels, 150 rows, live feed, full scene,
+no overlay). Two facts it already establishes: `render()` CPU time is
+0.3–0.5 ms in *every* configuration, which effectively rules out Three.js
+object-update cost; and `feed=off` is worth ~22% even against a rasterizer that
+dwarfs it, which strengthens the case against the per-event full-book walk.
+
+**No primary bottleneck is claimed for the M1.** Next action is the owner
+running `?bench=1` on the Air — `NEXT_ACTIONS.md` item 1. The interpretation is
+written down in advance in `PERFORMANCE_BASELINE.md` so the data chooses the
+fix rather than the argument.
+
 ## Known issues and unverified claims
 
 - **Performance is unverified on real hardware.** README's 60 FPS table

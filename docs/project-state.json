@@ -86,8 +86,28 @@
     "never rewrite published history on main without owner instruction (D19)"
   ],
   "blocked": [
-    { "what": "real-GPU performance verification", "on": "owner's hardware", "ref": "NEXT_ACTIONS.md#1" }
+    { "what": "M1 fx=off A/B — decides whether the grade-D lag is GPU fill rate or JavaScript", "on": "owner's hardware (2020 M1 MacBook Air, fanless, dpr 2)", "ref": "NEXT_ACTIONS.md#1" }
   ],
+  "performance": {
+    "baseline": "docs/PERFORMANCE_BASELINE.md (2026-09-15)",
+    "owner_report": "subjective grade D on 2020 M1 MacBook Air",
+    "measured_on": "software rasterizer (SwiftShader) — absolute FPS meaningless, ratios and JS profiles valid",
+    "draw_calls_per_frame": "29-40 at every book size; not a bottleneck",
+    "per_lead_react_components": false,
+    "fx_off_speedup": { "4892": "4.2x", "20000": "2.1x", "60000": "2.6x" },
+    "hottest_js_function": "THREE.Color.setStyle (CSS string parse) — 273ms/8s at 60k, ~48% of non-rasterizer JS self-time",
+    "root_cause_of_js_cost": "LeadField rewalks the entire book on every revision bump (~9/s); positionFor allocates per lead",
+    "round1_hypothesis": "GPU fill rate / post-processing — REFUTED on the owner's M1 (fx=off gave only some improvement)",
+    "round2": "shipped a subtractive diagnostic harness instead of a second guess: src/diag/diagnostics.ts + DiagOverlay.tsx; flags ?diag=1 ?bench=1 ?dpr=N ?field=off ?core=off ?feed=off ?anim=off, all OFF by default",
+    "cpu_gpu_method": "wrap renderer.render() and time it against the frame interval; renderMs approx frameMs = CPU-bound, renderMs << frameMs = limited elsewhere; EXT_disjoint_timer_query_webgl2 used when the driver exposes it",
+    "ruled_out": [
+      "per-lead React components (leads are one THREE.Points draw call)",
+      "draw-call count (29-45 per frame at every book size)",
+      "Three.js object-update cost (render() CPU is 0.3-0.5ms in EVERY configuration)"
+    ],
+    "primary_bottleneck": "UNKNOWN on the M1 — not claimed without evidence; ?bench=1 on the Air decides it",
+    "optimization_applied": "none"
+  },
   "repo": {
     "remote": "git@github.com:niko587/Apsis.git",
     "branch": "main",

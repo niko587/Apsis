@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { DIAG } from '../diag/diagnostics';
 
 /**
  * `prefers-reduced-motion`, live.
@@ -29,5 +30,8 @@ export function useReducedMotion(): boolean {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
-  return reduced;
+  // `?anim=off` routes through the reduced-motion path rather than adding a
+  // second set of branches to every animated component: it is already the
+  // tested, correct way to say "remove motion that carries no information".
+  return reduced || !DIAG.anim;
 }

@@ -17,6 +17,7 @@ import { CameraRig } from './CameraRig';
 import { SkillRing } from './SkillRing';
 import { UniverseOverlay } from './UniverseOverlay';
 import { APOAPSIS } from '../domain/gravity';
+import { DIAG, installRenderProbe } from '../diag/diagnostics';
 
 /**
  * `?fx=off` disables the post pipeline (§20: degrade gracefully on weaker
@@ -33,7 +34,8 @@ export function Universe() {
     <Canvas
       // Capped DPR: on a 3x display an uncapped ratio triples the fragment cost
       // of a full-bleed additive field for no perceptible gain (§20).
-      dpr={[1, 2]}
+      // `?dpr=N` overrides it for diagnosis only — default is unchanged.
+      dpr={DIAG.dpr ?? [1, 2]}
       camera={{ fov: 46, near: 0.1, far: 240, position: [0, APOAPSIS * 0.72, APOAPSIS * 1.32] }}
       // MSAA off: the composer owns the framebuffer, so canvas-level MSAA would
       // be paid and then thrown away. Bloom's blur covers most aliasing on the
@@ -57,15 +59,20 @@ export function Universe() {
         // types `params` as a complete RaycasterParameters — passing just the
         // Points entry fails to compile.
         raycaster.params.Points.threshold = 0.13;
+
+        // No-op unless a diagnostic parameter is present.
+        installRenderProbe(gl);
       }}
     >
       <color attach="background" args={['#03030a']} />
       <ambientLight intensity={0.22} />
       <StageRings />
-      <LeadField />
+      {/* `?field=off` / `?core=off` remove one draw cost each, for diagnosis.
+          Both default to on; nothing about the shipping scene changes. */}
+      {DIAG.field && <LeadField />}
       <AgentNetwork />
       <SkillRing />
-      <IntelligenceCore />
+      {DIAG.core && <IntelligenceCore />}
       <CameraKeys />
       <CameraRig />
       {/* Post pipeline. Selectivity is by luminance, which in this scene IS

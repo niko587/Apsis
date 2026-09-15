@@ -19,6 +19,8 @@ import { Orchestrator } from './ui/Orchestrator';
 import { AppointmentCentre } from './ui/AppointmentCentre';
 import { SystemState } from './ui/SystemState';
 import { UniverseBoundary } from './ui/UniverseBoundary';
+import { DIAG, runBenchIfRequested } from './diag/diagnostics';
+import { DiagOverlay } from './diag/DiagOverlay';
 import './App.css';
 
 function StageLegend() {
@@ -98,11 +100,17 @@ export default function App() {
   const booked = useApsis((s) => s.telemetry.booked);
 
   useEffect(() => {
-    if (!live) return;
+    // `?feed=off` silences the event source for diagnosis — it is the trigger
+    // for the per-event full-book revision walk, so removing it separates that
+    // cost from steady-state rendering. Defaults to on.
+    if (!live || !DIAG.feed) return;
     const source = createSimulatedSource({ eventsPerSecond: 9 });
     source.start();
     return () => source.stop();
   }, [live]);
+
+  // No-op without `?bench=1`.
+  useEffect(() => { runBenchIfRequested(); }, []);
 
   return (
     <div className="app">
@@ -156,6 +164,9 @@ export default function App() {
         <Orchestrator />
         <ActivityFeed />
       </aside>
+
+      {/* Renders nothing without `?diag=1`. */}
+      <DiagOverlay />
     </div>
   );
 }
