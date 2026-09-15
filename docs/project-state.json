@@ -2,6 +2,7 @@
   "name": "apsis",
   "identity": "AI Sales Operating System — Lead Universe. NOT the Cortex project.",
   "updated": "2026-09-15",
+  "repo_url": "https://github.com/niko587/Apsis",
   "spec": "~/Downloads/APSIS_Master_Build_Package/APSIS_MASTER_BUILD_PROMPT.md",
   "stack": {
     "build": "vite@8",
@@ -74,11 +75,16 @@
     "Apsis is not Cortex; ~/Downloads/cortex is out of scope"
   ],
   "blocked": [
-    { "what": "git push to GitHub", "on": "owner: install Command Line Tools (dialog triggered) + create repo + provide remote/auth", "ref": "NEXT_ACTIONS.md#1" },
-    { "what": "real-GPU performance verification", "on": "owner's hardware", "ref": "NEXT_ACTIONS.md#2" }
+    { "what": "real-GPU performance verification", "on": "owner's hardware", "ref": "NEXT_ACTIONS.md#1" }
   ],
+  "repo": {
+    "remote": "git@github.com:niko587/Apsis.git",
+    "branch": "main",
+    "auth": "ssh ed25519 (~/.ssh/id_ed25519, no passphrase); host pinned SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU",
+    "note": "do not switch to HTTPS: the dugite git ships no CA bundle and no osxkeychain helper (D19)"
+  },
   "environment": {
-    "machine": "macOS (darwin 25.1.0), node only at /usr/local/bin, git absent until CLT installed",
+    "machine": "macOS (darwin 25.1.0), node only at /usr/local/bin; no system git and no CLT — git is a dugite standalone build behind ~/.npm-global/bin/git; no gh CLI",
     "headless_gpu": "software-rasterized; FPS numbers from it are meaningless",
     "contention": "intermittent heavy load; prefer detached command runs"
   }

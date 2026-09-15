@@ -35,6 +35,8 @@ _Rules of engagement for any AI (or human) resuming this project. Written
    periodic lattices (D15).
 9. **Apsis is not Cortex.** Never rename, merge, or import from
    `~/Downloads/cortex`.
+10. **Never rewrite published history on `main`** (force-push, rebase of
+    pushed commits) without explicit owner instruction (D19).
 
 ## Verification discipline
 
@@ -80,7 +82,8 @@ After **every meaningful development phase**:
 3. Append to `docs/DECISIONS.md` if any new invariant/trade-off was made.
 4. Sync `docs/project-state.json`.
 5. Commit docs **together with** the implementation they describe; push to
-   the working branch (once the remote exists — see NEXT_ACTIONS 1).
+   `main` at `git@github.com:niko587/Apsis.git` (SSH — see D19; do not switch
+   the remote to HTTPS, this machine's git has no CA bundle).
 
 Commit style: imperative subject, body says why, ends with
 `Co-Authored-By: Claude <model> <noreply@anthropic.com>`. Do not commit

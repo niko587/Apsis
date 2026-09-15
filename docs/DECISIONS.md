@@ -100,3 +100,19 @@ AI can resume without local conversation history. See
 A 49k-`expect()` loop timed out under machine contention while the property
 itself takes milliseconds. Whole-book invariants collect violations in plain
 code and assert once (first 5 shown).
+
+## D19 — GitHub over SSH; stub history merged, not overwritten (2026-09-15)
+Two choices worth not re-litigating. **(a) SSH, not HTTPS.** The only git on
+this machine is a standalone `dugite` build (no CLT, no system git, no `gh`),
+and it ships **no CA bundle** and no `osxkeychain` credential helper — its own
+shim comments flag HTTPS pushing as untested. An ed25519 key with the host
+fingerprint pinned sidesteps both the trust store and credential storage. A
+token would have needed `credential.helper store`, i.e. plaintext on disk, for
+no gain. **(b) Merged, not force-pushed.** The remote already held 3 stub
+commits (one-line `README.md`, two typo fixes of the project name). The stub
+was read first, confirmed superseded by the repo's real 23KB README, and the
+histories joined with `--allow-unrelated-histories`, resolving add/add in
+favour of ours. Force-push would have lost nothing of value, but discarding
+someone else's published commits is the owner's call, not the agent's, and the
+merge is verified inert: `git diff cc8ca0b HEAD` is empty. Forbids: rewriting
+published history on `main` without explicit owner instruction.

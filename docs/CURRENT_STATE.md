@@ -1,6 +1,7 @@
 # Current State
 
-_Last updated: 2026-09-15 (end of the shader-fix + nationwide-book phase)_
+_Last updated: 2026-09-15 (GitHub bootstrap; previous phase: shader fix +
+nationwide book)_
 
 This file is the snapshot an external AI project manager should trust over any
 conversation history. It describes the repository as it actually is.
@@ -61,6 +62,9 @@ size, `?fx=off` disables post-processing.
    and phase-driven over a periodic lattice. Details in `DECISIONS.md` D15 and
    `src/universe/Core.tsx` comments.
 7. Tests 80 → 88; docs (`README.md`, `SELF-CRITIQUE.md`) trued up.
+8. **GitHub bootstrap** — remote created, SSH auth, unrelated histories
+   merged, `main` pushed (see "Git / GitHub state" below and D19). This
+   unblocks `NEXT_ACTIONS.md` item 3 (CI), which was waiting on it.
 
 ## In flight right now
 
@@ -69,13 +73,32 @@ The next planned work is in `NEXT_ACTIONS.md`.
 
 ## Git / GitHub state
 
-- The repo had **no version control at all** until 2026-09-15 — git was not
-  installed on this machine (no Xcode CLT). `.gitignore` existed from the
-  Vite scaffold.
-- Status of the workaround and the push path is tracked in `NEXT_ACTIONS.md`
-  item 1. **There is no GitHub remote yet**; nothing has ever been pushed.
-  A repo URL + credentials (or `gh auth login` once CLT is installed) are
-  needed from the project owner.
+**Canonical remote: https://github.com/niko587/Apsis — `main` is pushed and
+tracking.** Bootstrapped 2026-09-15; `NEXT_ACTIONS.md` item 1 is closed.
+
+- The repo had **no version control at all** until 2026-09-15 — macOS ships
+  `/usr/bin/git` only as a shim demanding the Xcode CLT, and the CLT install
+  fails on this machine ("not currently available from the Software Update
+  server"). The working git is a **standalone `dugite` build** behind a shim
+  at `~/.npm-global/bin/git` (`git 2.53.0`, real binary under
+  `~/.local/gittools/node_modules/dugite/git`). There is still no system git
+  and no `gh` CLI.
+- **Auth is SSH, not HTTPS.** The remote is `git@github.com:niko587/Apsis.git`.
+  An ed25519 key sits at `~/.ssh/id_ed25519` (no passphrase, so pushes are
+  unattended); `github.com` is pinned in `~/.ssh/known_hosts` with the
+  verified fingerprint `SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU`.
+  SSH was chosen over a token because dugite ships **no CA bundle** — its own
+  shim comments note HTTPS pushing is untested — and because no credential
+  helper (`osxkeychain`) exists in that build. Do not switch the remote back
+  to HTTPS without solving the trust store first.
+- The GitHub repo was **not empty**: it carried 3 stub commits (`Initial
+  commit` plus two typo fixes, *Aspris* → *Apris* → *Apsis*) whose only
+  content was a one-line `README.md`. Histories were **merged** with
+  `--allow-unrelated-histories` rather than force-pushed, resolving the
+  README add/add conflict in favour of the repo's real one. See D19.
+- Git identity is set **repo-locally** (`niko <niko@nshealthsolutions.org>`),
+  matching the pre-existing isomorphic-git commit. There is no global
+  identity on this machine.
 
 ## Known issues and unverified claims
 
