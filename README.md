@@ -1,5 +1,7 @@
 # Apsis
 
+[![CI](https://github.com/niko587/Apsis/actions/workflows/ci.yml/badge.svg)](https://github.com/niko587/Apsis/actions/workflows/ci.yml)
+
 An AI Sales Operating System whose primary surface is a living 3D **Lead Universe**.
 
 An *apsis* is a point of extreme approach on an orbit: **apoapsis** the farthest,
@@ -14,10 +16,15 @@ with, the separate Cortex project.
 
 ```
 npm install
-npm run dev      # http://localhost:5173
-npm test         # domain invariants
+npm run dev       # http://localhost:5173
+npm test          # domain invariants (vitest, src/**)
+npm run test:e2e  # browser reachability (Playwright; builds first)
 npm run build
+npm run check     # all five gates, the same set CI runs
 ```
+
+`npm run test:e2e` needs browsers once: `npx playwright install chromium`.
+URL params: `?leads=N` book size, `?fx=off` disables post-processing.
 
 ## Architecture
 

@@ -31,7 +31,8 @@ _Last updated: 2026-09-15. Status vocabulary:_
 | Task decomposition ("Apsis decides") | §38 | Missing | The routing half exists; understanding→decompose→select does not. |
 | Backend / CRM / transport | §19 | Simulated | `state/source.ts` fabricates events at ~9/s. Single-seam replacement point. |
 | Persistence | — | Missing | Reload reseeds. Fine for demo, wrong for product. |
-| GitHub / CI | — | Missing | No remote, no CI. Git history begins 2026-09-15 (see NEXT_ACTIONS 1). |
+| GitHub / CI | — | Real | Remote `git@github.com:niko587/Apsis.git`, `main` canonical. CI (`.github/workflows/ci.yml`) runs types · lint · unit · build · reachability on push/PR. Git history begins 2026-09-15. |
+| Browser reachability tests | — | Real | `e2e/reachability.spec.ts`. Nine rail panels + command bar at 1280×800 / 1600×1000 / 2560×1440: viewport geometry, `elementFromPoint`, real click. Proven to catch the D12 regression (D20). |
 
 ## Real vs mocked, in one paragraph
 

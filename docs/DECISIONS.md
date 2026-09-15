@@ -116,3 +116,21 @@ favour of ours. Force-push would have lost nothing of value, but discarding
 someone else's published commits is the owner's call, not the agent's, and the
 merge is verified inert: `git diff cc8ca0b HEAD` is empty. Forbids: rewriting
 published history on `main` without explicit owner instruction.
+
+## D20 — Reachability is proven with real input events, never programmatic
+(2026-09-15) `e2e/reachability.spec.ts` establishes that a panel is reachable
+by pointing at the rail and sending **wheel events**, then hit-testing with
+`elementFromPoint` and issuing a real click. It deliberately does *not* use
+`scrollIntoView()` or lean on Playwright's auto-scroll-before-click, because
+**an `overflow: hidden` element is still programmatically scrollable** — both
+of those move it happily, so a suite built on either would have passed while
+the D12 rail was broken. That is the exact bug the file exists to catch, so
+the cheap way to write it is the way that makes it worthless.
+Proven, not assumed: reverting `.rail` to `overflow: hidden` turns 6 of 8
+tests red, naming Leads/Orchestrator/Activity-feed as unreachable with
+`afterWheelTicks=1` (the loop's no-movement bail-out). Restored after.
+Forbids: asserting reachability through any API a user does not have.
+Also fixed here: `e2e/**` is excluded from vitest in `vite.config.ts`. Its
+default globs claim `**/*.spec.ts`, so without that line `npx vitest run` —
+the command the protocol and `project-state.json` both name — tries to open a
+Playwright file and fails. Two runners, two directories, no overlap.

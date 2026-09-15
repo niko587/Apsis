@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A superseded run on the same branch is wasted minutes; the newest push is the
+# only one whose answer anybody acts on.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: types · lint · unit · build · reachability
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Five gates, named separately so a red run says which one broke rather
+      # than "the check failed". Order is cheapest-and-most-diagnostic first.
+      - name: TypeScript
+        run: npx tsc -b
+
+      - name: Lint
+        run: npx oxlint
+
+      - name: Unit tests
+        run: npx vitest run
+
+      - name: Production build
+        run: npm run build
+
+      # Everything above this line runs in Node and proves nothing about what a
+      # user can reach. D12 shipped with all four green. This is the gate that
+      # opens a browser. It must never measure FPS — GitHub runners have no GPU,
+      # exactly like this project's sandbox (AI_DEVELOPMENT_PROTOCOL).
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Reachability smoke tests
+        # `npm run test:e2e` would rebuild; the artifact from the build step
+        # above is the one worth testing, and `vite preview` serves it.
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

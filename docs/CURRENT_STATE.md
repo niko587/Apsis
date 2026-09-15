@@ -10,15 +10,21 @@ conversation history. It describes the repository as it actually is.
 
 | Check | Status | Command |
 |---|---|---|
-| TypeScript | clean | `npx tsc -b` |
-| Tests | **88 / 88 passing** (8 files) | `npx vitest run` |
-| Lint | exit 0 (warnings only, see below) | `npx oxlint` |
-| Production build | green, ~1.26 MB bundle (347 KB gz) | `npm run build` |
+| TypeScript | clean (3 projects: app, node, e2e) | `npm run typecheck` |
+| Unit tests | **88 / 88 passing** (8 files) | `npm test` |
+| Browser reachability | **8 / 8 passing** (3 viewports) | `npm run test:e2e` |
+| Lint | exit 0 (warnings only, see below) | `npm run lint` |
+| Production build | green, ~1.27 MB bundle (350 KB gz) | `npm run build` |
 | Runtime console | 0 errors at load and through drill/command flows | — |
+| All five gates | the set CI runs | `npm run check` |
 
 Run locally: `npm install && npm run dev` (port 5173) or
 `npx vite preview --port 4173` after a build. URL params: `?leads=N` book
-size, `?fx=off` disables post-processing.
+size, `?fx=off` disables post-processing. Playwright needs browsers once:
+`npx playwright install chromium`.
+
+**CI**: `.github/workflows/ci.yml` runs all five gates on push and PR to
+`main`. Badge in `README.md`.
 
 ## What works end to end (all verified this session)
 
@@ -63,8 +69,32 @@ size, `?fx=off` disables post-processing.
    `src/universe/Core.tsx` comments.
 7. Tests 80 → 88; docs (`README.md`, `SELF-CRITIQUE.md`) trued up.
 8. **GitHub bootstrap** — remote created, SSH auth, unrelated histories
-   merged, `main` pushed (see "Git / GitHub state" below and D19). This
-   unblocks `NEXT_ACTIONS.md` item 3 (CI), which was waiting on it.
+   merged, `main` pushed (see "Git / GitHub state" below and D19).
+
+## Landed in the hardening phase (2026-09-15, later the same day)
+
+Closes `NEXT_ACTIONS.md` items 2 and 3. No product code changed — the Lead
+Universe, gravity, agents, command bar, drill, Core, telemetry, appointment
+centre, a11y and responsive behaviour are all untouched.
+
+1. **Browser reachability suite** (`e2e/reachability.spec.ts`, 8 tests).
+   Nine rail panels plus the command bar at 1280×800, 1600×1000 and
+   2560×1440: viewport geometry, `elementFromPoint` hit test, and a real
+   click, reached only through genuine wheel events (D20). Plus an
+   interaction test that clicks a lead row and asserts the selection lands in
+   the detail panel — D12's sharpest symptom was an unclickable Leads list.
+2. **Proved the suite catches D12.** Reverting `.rail` to `overflow: hidden`
+   turns 6 of 8 red with the unreachable panels named; restored afterwards
+   and confirmed byte-identical to the committed CSS.
+3. **CI** (`.github/workflows/ci.yml`) — types · lint · unit · build ·
+   reachability, on push/PR to `main`, with the Playwright report uploaded on
+   failure. README badge added.
+4. **Fixed a latent break introduced by adding `e2e/`**: vitest's default
+   globs collect `**/*.spec.ts`, so `npx vitest run` would have tried to open
+   a Playwright file. `vite.config.ts` now excludes `e2e/**` (D20).
+5. **`package.json` gained the scripts the docs already assumed** — `test`,
+   `typecheck`, `test:e2e`, `check`. README advertised `npm test` before it
+   existed.
 
 ## In flight right now
 

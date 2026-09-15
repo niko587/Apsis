@@ -62,9 +62,12 @@ separate thing from this working practice — see `ARCHITECTURE.md`.
 
 - `node` (v22) exists only at `/usr/local/bin/node` — prepend to `PATH` or
   `npx` is "command not found".
-- **git was not installed** as of 2026-09-15 (Xcode Command Line Tools absent;
-  install was triggered, see `CURRENT_STATE.md` for the git story).
-- `package.json` has no `test` script; run `npx vitest run`.
+- **There is still no system git and no `gh`** (Xcode Command Line Tools absent
+  and uninstallable here). The working `git` is a standalone `dugite` build
+  behind `~/.npm-global/bin/git`; the remote is SSH-only. See
+  `CURRENT_STATE.md` → "Git / GitHub state" and D19.
+- `package.json` now has `test`, `typecheck`, `test:e2e` and `check` scripts;
+  `npm run check` runs the same five gates as CI.
 - The machine is intermittently heavily contended (vitest module transforms
   observed at 165s vs a normal 66ms). Long commands should be run detached
   with output to a log; a test timeout under load is not necessarily a failure.

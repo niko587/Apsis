@@ -10,23 +10,30 @@
     "3d": "three@0.186 + @react-three/fiber@9 + @react-three/postprocessing",
     "state": "zustand@5",
     "test": "vitest@5",
-    "lint": "oxlint"
+    "e2e": "@playwright/test (chromium)",
+    "lint": "oxlint",
+    "ci": "GitHub Actions (.github/workflows/ci.yml)"
   },
   "commands": {
     "env": "export PATH=/usr/local/bin:$PATH",
     "dev": "npm run dev",
     "build": "npm run build",
-    "test": "npx vitest run",
-    "lint": "npx oxlint",
-    "typecheck": "npx tsc -b",
-    "preview": "npx vite preview --port 4173"
+    "test": "npm test",
+    "test_e2e": "npm run test:e2e",
+    "lint": "npm run lint",
+    "typecheck": "npm run typecheck",
+    "check_all": "npm run check",
+    "preview": "npx vite preview --port 4173",
+    "playwright_browsers": "npx playwright install chromium"
   },
   "checks": {
-    "typescript": "clean",
+    "typescript": "clean (app + node + e2e projects)",
     "tests": "88/88 passing (8 files)",
+    "e2e": "8/8 passing (3 viewports); proven to fail on the D12 regression",
     "lint": "exit 0 (R3F idiom warnings in LeadField.tsx only)",
-    "build": "green (~1.26MB, 347KB gz)",
-    "runtime_console_errors": 0
+    "build": "green (~1.27MB, 350KB gz)",
+    "runtime_console_errors": 0,
+    "ci": "types, lint, unit, build, reachability on push/PR to main"
   },
   "loc": { "total": 7891, "domain": 2041, "state": 615, "orchestrator": 802, "ui": 1166, "universe": 2646 },
   "phases": [
@@ -53,7 +60,7 @@
     { "key": "appointment-centre", "spec": "§16", "status": "real", "files": ["src/domain/appointments.ts", "src/ui/AppointmentCentre.tsx"] },
     { "key": "telemetry", "spec": "§17", "status": "real", "files": ["src/state/store.ts", "src/ui/SystemState.tsx"] },
     { "key": "event-architecture", "spec": "§18", "status": "partial-divergent (flat union, not namespaced)", "files": ["src/domain/types.ts"] },
-    { "key": "performance-60fps", "spec": "§20", "status": "unverified-on-real-gpu", "files": [] },
+    { "key": "performance-60fps", "spec": "§20", "status": "unverified-on-real-gpu (CI runners are GPU-less; FPS must never be asserted there)", "files": [] },
     { "key": "accessibility", "spec": "§21", "status": "real", "files": ["src/ui/LeadList.tsx", "src/ui/StatusAnnouncer.tsx"] },
     { "key": "responsive", "spec": "§22", "status": "real (420-2560px verified)", "files": ["src/App.css"] },
     { "key": "design-tokens", "spec": "§24", "status": "partial (conventions, not a token system)", "files": ["src/App.css"] },
@@ -61,7 +68,9 @@
     { "key": "task-decomposition", "spec": "§38", "status": "missing", "files": [] },
     { "key": "transport", "spec": "§19", "status": "simulated (single-seam)", "files": ["src/state/source.ts"] },
     { "key": "persistence", "spec": "-", "status": "missing", "files": [] },
-    { "key": "nationwide-book", "spec": "-", "status": "real (90 metros, 50 states + DC, population-weighted)", "files": ["src/domain/geography.ts", "src/domain/seed.ts"] }
+    { "key": "nationwide-book", "spec": "-", "status": "real (90 metros, 50 states + DC, population-weighted)", "files": ["src/domain/geography.ts", "src/domain/seed.ts"] },
+    { "key": "reachability-e2e", "spec": "-", "status": "real (D20); proven to catch the D12 regression", "files": ["e2e/reachability.spec.ts", "playwright.config.ts"] },
+    { "key": "ci", "spec": "-", "status": "real", "files": [".github/workflows/ci.yml"] }
   ],
   "invariants": [
     "ingest(event) is the store's only mutator; score is the only thing that moves a lead",
@@ -72,7 +81,9 @@
     "canvas aria-hidden with DOM information parity",
     "parser surfaces unparsed words",
     "no raw elapsed seconds in shader noise domains (wrapped phases, periodic lattice)",
-    "Apsis is not Cortex; ~/Downloads/cortex is out of scope"
+    "Apsis is not Cortex; ~/Downloads/cortex is out of scope",
+    "reachability is proven with real input events (wheel + elementFromPoint + click), never scrollIntoView or Playwright auto-scroll (D20)",
+    "never rewrite published history on main without owner instruction (D19)"
   ],
   "blocked": [
     { "what": "real-GPU performance verification", "on": "owner's hardware", "ref": "NEXT_ACTIONS.md#1" }
@@ -86,6 +97,7 @@
   "environment": {
     "machine": "macOS (darwin 25.1.0), node only at /usr/local/bin; no system git and no CLT — git is a dugite standalone build behind ~/.npm-global/bin/git; no gh CLI",
     "headless_gpu": "software-rasterized; FPS numbers from it are meaningless",
+    "ci_runner": "GitHub Actions ubuntu-latest, node 22 — also GPU-less: reachability yes, FPS never",
     "contention": "intermittent heavy load; prefer detached command runs"
   }
 }
