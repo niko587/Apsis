@@ -1,0 +1,85 @@
+{
+  "name": "apsis",
+  "identity": "AI Sales Operating System — Lead Universe. NOT the Cortex project.",
+  "updated": "2026-09-15",
+  "spec": "~/Downloads/APSIS_Master_Build_Package/APSIS_MASTER_BUILD_PROMPT.md",
+  "stack": {
+    "build": "vite@8",
+    "ui": "react@19 + typescript@6",
+    "3d": "three@0.186 + @react-three/fiber@9 + @react-three/postprocessing",
+    "state": "zustand@5",
+    "test": "vitest@5",
+    "lint": "oxlint"
+  },
+  "commands": {
+    "env": "export PATH=/usr/local/bin:$PATH",
+    "dev": "npm run dev",
+    "build": "npm run build",
+    "test": "npx vitest run",
+    "lint": "npx oxlint",
+    "typecheck": "npx tsc -b",
+    "preview": "npx vite preview --port 4173"
+  },
+  "checks": {
+    "typescript": "clean",
+    "tests": "88/88 passing (8 files)",
+    "lint": "exit 0 (R3F idiom warnings in LeadField.tsx only)",
+    "build": "green (~1.26MB, 347KB gz)",
+    "runtime_console_errors": 0
+  },
+  "loc": { "total": 7891, "domain": 2041, "state": 615, "orchestrator": 802, "ui": 1166, "universe": 2646 },
+  "phases": [
+    { "id": 1, "title": "Architecture", "status": "done" },
+    { "id": 2, "title": "Visual system", "status": "done" },
+    { "id": 3, "title": "Intelligence Core", "status": "done" },
+    { "id": 4, "title": "Lead Universe", "status": "done" },
+    { "id": 5, "title": "Real event integration", "status": "done-above-transport-seam" },
+    { "id": 6, "title": "Agent/skill visualization", "status": "done" },
+    { "id": 7, "title": "Appointment centre", "status": "done" },
+    { "id": 8, "title": "Lead detail / clusters", "status": "mostly-done" },
+    { "id": 9, "title": "Performance / accessibility", "status": "a11y-done, perf-unverified-on-real-gpu" },
+    { "id": 10, "title": "Final visual polish", "status": "not-started" }
+  ],
+  "features": [
+    { "key": "gravity-scoring-decay", "spec": "§4", "status": "real", "files": ["src/domain/scoring.ts", "src/domain/gravity.ts"] },
+    { "key": "lead-universe-3d", "spec": "§7", "status": "real", "files": ["src/universe/LeadField.tsx"] },
+    { "key": "intelligence-core", "spec": "§8", "status": "real (state-vocabulary partial)", "files": ["src/universe/Core.tsx"] },
+    { "key": "agents-tasks-claims-arcs", "spec": "§11", "status": "real", "files": ["src/domain/agents.ts", "src/universe/AgentNetwork.tsx"] },
+    { "key": "active-skills", "spec": "§12", "status": "real", "files": ["src/universe/skills.ts", "src/universe/UniverseOverlay.tsx"] },
+    { "key": "command-interface", "spec": "§13", "status": "real (grammar, not LLM, by design)", "files": ["src/domain/query.ts", "src/ui/CommandBar.tsx"] },
+    { "key": "lead-detail", "spec": "§14", "status": "partial (content complete, spatial resolve pending)", "files": ["src/ui/LeadDetail.tsx"] },
+    { "key": "cluster-drill", "spec": "§15", "status": "real for region/state/city/segment; campaign/source/agent/intent/timeframe missing", "files": ["src/universe/clusters.ts", "src/state/drillStore.ts", "src/universe/CameraRig.tsx"] },
+    { "key": "appointment-centre", "spec": "§16", "status": "real", "files": ["src/domain/appointments.ts", "src/ui/AppointmentCentre.tsx"] },
+    { "key": "telemetry", "spec": "§17", "status": "real", "files": ["src/state/store.ts", "src/ui/SystemState.tsx"] },
+    { "key": "event-architecture", "spec": "§18", "status": "partial-divergent (flat union, not namespaced)", "files": ["src/domain/types.ts"] },
+    { "key": "performance-60fps", "spec": "§20", "status": "unverified-on-real-gpu", "files": [] },
+    { "key": "accessibility", "spec": "§21", "status": "real", "files": ["src/ui/LeadList.tsx", "src/ui/StatusAnnouncer.tsx"] },
+    { "key": "responsive", "spec": "§22", "status": "real (420-2560px verified)", "files": ["src/App.css"] },
+    { "key": "design-tokens", "spec": "§24", "status": "partial (conventions, not a token system)", "files": ["src/App.css"] },
+    { "key": "model-orchestrator", "spec": "§30-40", "status": "real in ASSISTED mode; programmatic invocation missing (no host mechanism)", "files": ["src/orchestrator/"] },
+    { "key": "task-decomposition", "spec": "§38", "status": "missing", "files": [] },
+    { "key": "transport", "spec": "§19", "status": "simulated (single-seam)", "files": ["src/state/source.ts"] },
+    { "key": "persistence", "spec": "-", "status": "missing", "files": [] },
+    { "key": "nationwide-book", "spec": "-", "status": "real (90 metros, 50 states + DC, population-weighted)", "files": ["src/domain/geography.ts", "src/domain/seed.ts"] }
+  ],
+  "invariants": [
+    "ingest(event) is the store's only mutator; score is the only thing that moves a lead",
+    "3D layer holds no authoritative state; re-derives per frame",
+    "no timer-driven fake progress; no invented backend behaviour (§27)",
+    "orchestrator never asserts model availability; execution confirmed structurally (§37)",
+    "only appointment_booked reaches the centre (TOUCH_CEILING=98)",
+    "canvas aria-hidden with DOM information parity",
+    "parser surfaces unparsed words",
+    "no raw elapsed seconds in shader noise domains (wrapped phases, periodic lattice)",
+    "Apsis is not Cortex; ~/Downloads/cortex is out of scope"
+  ],
+  "blocked": [
+    { "what": "git push to GitHub", "on": "owner: install Command Line Tools (dialog triggered) + create repo + provide remote/auth", "ref": "NEXT_ACTIONS.md#1" },
+    { "what": "real-GPU performance verification", "on": "owner's hardware", "ref": "NEXT_ACTIONS.md#2" }
+  ],
+  "environment": {
+    "machine": "macOS (darwin 25.1.0), node only at /usr/local/bin, git absent until CLT installed",
+    "headless_gpu": "software-rasterized; FPS numbers from it are meaningless",
+    "contention": "intermittent heavy load; prefer detached command runs"
+  }
+}

@@ -1,0 +1,229 @@
+/* Universe overlays: cluster breadcrumb (left) and active skills (right).
+   Prefixed `uv-` so nothing here can collide with App.css. Uses the same
+   design tokens (:root custom properties) as the rest of the shell. */
+
+.uv-overlay {
+  position: absolute;
+  inset: 14px 14px auto 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.uv-clusters,
+.uv-skills {
+  pointer-events: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 11px 13px;
+  backdrop-filter: blur(6px);
+  max-width: 300px;
+  font-size: 12px;
+}
+
+/* ---- breadcrumb ---- */
+
+.uv-crumbs {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+}
+
+.uv-crumbs li { display: flex; align-items: center; }
+
+.uv-crumbs li + li::before {
+  content: '›';
+  color: var(--muted);
+  margin: 0 5px;
+}
+
+.uv-crumbs button,
+.uv-crumbs span {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: none;
+  border: none;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+
+.uv-crumbs button:hover { color: var(--text); }
+.uv-crumbs span[aria-current] { color: var(--accent); cursor: default; }
+
+.uv-members {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.uv-clusters h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Scrolls rather than truncating — the South alone is seventeen states, and a
+   chip the user cannot reach is a filter the product does not have. */
+.uv-children {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  padding: 0 3px 0 0;
+  max-height: 176px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(122, 138, 190, 0.3) transparent;
+}
+
+.uv-children::-webkit-scrollbar { width: 6px; }
+.uv-children::-webkit-scrollbar-track { background: transparent; }
+.uv-children::-webkit-scrollbar-thumb {
+  background: rgba(122, 138, 190, 0.26);
+  border-radius: 999px;
+}
+
+.uv-child-n {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.uv-children button {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--text);
+  background: rgba(143, 107, 255, 0.09);
+  border: 1px solid rgba(143, 107, 255, 0.28);
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.uv-children button:hover {
+  border-color: var(--accent);
+  background: rgba(143, 107, 255, 0.18);
+}
+
+.uv-count { color: var(--muted); font-size: 10px; }
+
+.uv-more, .uv-hint, .uv-idle {
+  margin: 7px 0 0;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.uv-back {
+  margin-top: 9px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+
+.uv-back:hover { border-color: var(--accent); }
+
+.uv-back kbd {
+  font: inherit;
+  font-size: 9px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 3px;
+  margin-left: 5px;
+}
+
+/* ---- active skills ---- */
+
+.uv-skills { min-width: 190px; }
+
+.uv-skills h2 {
+  margin: 0 0 8px;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.uv-skills ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.uv-skills li {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  grid-template-areas: 'dot name status' '. detail detail';
+  align-items: center;
+  column-gap: 7px;
+}
+
+.uv-dot {
+  grid-area: dot;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 7px currentColor;
+}
+
+.uv-skill-name { grid-area: name; font-weight: 600; font-size: 11.5px; }
+
+.uv-status {
+  grid-area: status;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.uv-skills li[data-status='EXECUTING'] .uv-status { color: var(--accent); }
+.uv-skills li[data-status='COMPLETE'] .uv-status { color: var(--green); }
+.uv-skills li[data-status='ERROR'] .uv-status { color: #ff3b57; }
+
+.uv-detail {
+  grid-area: detail;
+  font-size: 10.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Skills panel yields on narrow stacked layouts; the breadcrumb is the one
+   that must never disappear (it is the way back out). */
+@media (max-width: 820px) {
+  .uv-skills { display: none; }
+  .uv-clusters { max-width: 240px; }
+}
