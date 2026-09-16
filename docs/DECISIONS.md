@@ -273,3 +273,49 @@ Forbids: `nth()`/`first()` as an identity in any assertion that spans a click on
 live data. The same reading retired `nth(1)` in `spatial-focus.spec.ts`, which
 progressive reveal had turned into a positional claim about a one-member
 cluster.
+
+## D27 — Apsis holds no model credential, and never asks a model who anyone is
+(2026-09-16) Opt-in LLM command parsing. Apsis is a browser-only SPA with no
+server, so any API key it can reach is public: `VITE_*` values are inlined into
+the bundle at build time and `import.meta.env` is readable in devtools. A key
+shipped to the browser is compromised the moment it is built.
+So the boundary is: Apsis holds no vendor credential and calls no vendor API. It
+POSTs `{ text, schema }` to an endpoint the HOST declares via
+`window.__APSIS_COMMAND_INTERPRETER__`, mirroring §37's `__APSIS_MODEL_ENV__` —
+the environment states what is reachable, and the default is "nothing is". The
+host owns the key, the rate limiting and the abuse problem, and the vendor stays
+swappable because nothing in `src/` knows which model answered. No SDK: `fetch`
+and nothing else, so there is no dependency that could acquire a key later.
+What leaves the browser is the user's own sentence plus the closed vocabularies
+(stages, segments, city and state names) — schema, not records. Never a lead,
+name, phone, email, score, intent or event. The model is a language interpreter,
+not a lead database: parsing "hot leads in Florida" needs to know that `hot` and
+`FL` exist, not who they are. Asserted against a 500-lead seeded book rather
+than promised.
+Forbids: an API key in client-visible source, a direct vendor call from the
+browser, an LLM SDK in `package.json`, and any request body built from store
+state.
+
+## D28 — Nothing is applied that the model cannot point at
+(2026-09-16) Every filter an interpreter returns must cite a `span` that appears
+verbatim in the user's input, and a citation that is not there kills the filter.
+The same rule governs the ACTION — `actionSpan` is required to apply a non-`none`
+action, which extends the contract's envelope by one optional field.
+That extension is deliberate and it is the difference between honest and nearly
+honest. `unrecognised` is computed by SUBTRACTING accepted spans from the input,
+exactly as `parseCommand` computes it, so a clause the model dropped cannot
+disappear. Without a span for the action, "call them" would either be reported
+as ignored while agents were being dispatched, or be exempted from the residue
+and quietly trusted. Requiring the citation makes one rule cover everything:
+no provenance, no effect.
+The model's own `unmapped` list is validated for shape and then NOT rendered.
+The residue already guarantees nothing vanishes, and it is built from the user's
+words — merging model-authored free text into the outcome panel would let the
+interpreter write Apsis's UI copy for no gain in honesty.
+Stop words are not duplicated from `query.ts` (forbidden to this milestone and
+private anyway). The grammar is asked instead: a residue word is filler only if
+`parseCommand` neither recognises nor reports it. A word the domain KNOWS but
+the interpreter skipped — "tampa" — is therefore still surfaced, which is
+precisely the failure worth seeing.
+Forbids: trusting a model's account of what it understood; applying any clause
+without verifiable provenance; duplicating the grammar's stop-word list.

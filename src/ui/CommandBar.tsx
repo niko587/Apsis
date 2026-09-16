@@ -13,11 +13,11 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   describeCommand,
   isEmptyQuery,
-  parseCommand,
   runQuery,
   type CommandAction,
   type FunnelStep,
 } from '../domain/query';
+import { createCommandRunner } from '../command/router';
 import type { LeadEventKind } from '../domain/types';
 import { useApsis } from '../state/store';
 
@@ -43,6 +43,13 @@ interface Outcome {
   dispatched: number | null;
   /** Set when the command produced nothing actionable. */
   note: string | null;
+  /**
+   * Set only when an interpreter was configured and did not answer usefully.
+   * A separate field from `note`: one is about the RESULT, the other about
+   * which parser produced it, and collapsing them would make a fallback look
+   * like a failed query.
+   */
+  interpreterNote: string | null;
 }
 
 export function CommandBar() {
@@ -56,13 +63,36 @@ export function CommandBar() {
 
   const placeholder = useMemo(() => EXAMPLES[0], []);
 
+  /**
+   * Owns the abort controller and the generation counter (§J). One per mounted
+   * command bar, so a second submit cancels the first rather than racing it.
+   */
+  const runner = useMemo(() => createCommandRunner(), []);
+
   const run = useCallback(
     async (raw: string) => {
       const text = raw.trim();
       if (!text) return;
       setRunning(true);
 
-      const parsed = parseCommand(text);
+      /**
+       * The only change to this function.
+       *
+       * `pending` is a plain value whenever no interpreter is configured, and
+       * the `await` is skipped in that case ON PURPOSE: awaiting a non-promise
+       * still defers a turn, which would split what is currently one React
+       * render into two and make the default path observably different from the
+       * one that shipped. With no interpreter this stays a single synchronous
+       * block, exactly as before.
+       */
+      const pending = runner.run(text);
+      const resolved = pending instanceof Promise ? await pending : pending;
+
+      // Superseded by a newer command, cancelled, or a duplicate of one already
+      // in flight. The submission that owns the screen will clear `running`.
+      if (resolved === null) return;
+
+      const { parsed, note: interpreterNote } = resolved;
       const { query, action, understood, unrecognised } = parsed;
 
       if (isEmptyQuery(query)) {
@@ -76,6 +106,7 @@ export function CommandBar() {
           action,
           dispatched: null,
           note: 'No filter recognised — nothing to run. Name a stage, segment, city, recency or score.',
+          interpreterNote,
         });
         setRunning(false);
         return;
@@ -112,13 +143,16 @@ export function CommandBar() {
             : action !== 'none' && dispatched === 0
               ? 'Every matched lead is already being worked by an agent.'
               : null,
+        interpreterNote,
       });
       setRunning(false);
     },
-    [requestWork, setMatched, setFocus],
+    [requestWork, setMatched, setFocus, runner],
   );
 
   const clear = () => {
+    runner.cancel();
+    setRunning(false);
     setOutcome(null);
     setMatched(null);
     setFocus(null);
@@ -198,6 +232,15 @@ export function CommandBar() {
               </>
             )}
           </div>
+
+          {/* Which parser answered, and only when that is not the obvious one.
+              Never a modal, never an error state: the results above are real
+              and usable, and this says where they came from. */}
+          {outcome.interpreterNote && (
+            <p className="command-note muted" data-interpreter-note>
+              {outcome.interpreterNote}
+            </p>
+          )}
         </div>
       )}
 

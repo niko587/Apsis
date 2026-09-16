@@ -11,8 +11,8 @@ conversation history. It describes the repository as it actually is.
 | Check | Status | Command |
 |---|---|---|
 | TypeScript | clean (3 projects: app, node, e2e) | `npm run typecheck` |
-| Unit tests | **171 / 171 passing** (13 files) | `npm test` |
-| Browser suite | **33 / 33 passing** | `npm run test:e2e` |
+| Unit tests | **229 / 229 passing** (15 files) | `npm test` |
+| Browser suite | **44 / 44 passing** | `npm run test:e2e` |
 | Lint | exit 0 (warnings only, see below) | `npm run lint` |
 | Production build | green, ~1.27 MB bundle (350 KB gz) | `npm run build` |
 | Runtime console | 0 errors at load and through drill/command flows | — |

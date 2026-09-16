@@ -79,33 +79,40 @@ screen — a synthetic `.click()` still "worked". The suite now asserts the row'
 click point is on screen, hit-tests to the row, and that a real click selects.
 Same family as D12: **visible must mean operable.**
 
-## 1. LLM command parsing (opt-in) — **CURRENT MILESTONE**
-**MODEL: OPUS.** Contract written and committed:
-**`docs/CONTRACT_LLM_COMMAND_PARSING.md`** — current pipeline, the canonical
-`LeadQuery`, the single seam, activation, no-key behaviour, provider boundary,
-validation, unmapped-clause honesty, fallback table, async/cancellation, UI
-states, security and privacy, file boundaries, 15 unit + 7 browser tests,
-acceptance criteria, implementation sequence, and the next prompt in §T.
+## 1. (closed) LLM command parsing (opt-in) — IMPLEMENTED, owner verification pending
+**MODEL: OPUS.** Contract: **`docs/CONTRACT_LLM_COMMAND_PARSING.md`**, met in
+full. Implementation in `src/command/` (three files: `parseInterpretation.ts`,
+`interpreter.ts`, `router.ts`), one `await` in `CommandBar.tsx`, one additive CSS
+rule. `src/domain/query.ts` is byte-unchanged and no dependency was added.
 
-**What:** an alternative front end to `parseCommand` that returns the same
-`ParsedCommand` via a model call, opt-in on a host-declared endpoint; the
-grammar remains the fallback and the oracle.
+**Activation.** `window.__APSIS_COMMAND_INTERPRETER__ = { endpoint, timeoutMs? }`,
+declared by the host exactly as `__APSIS_MODEL_ENV__` is. Absent, malformed or
+empty ⇒ no interpreter exists. `?interpreter=off` forces the grammar.
 
-**The two findings that shape it:**
-1. **Apsis is a browser-only SPA with no server and no `fetch()` in `src/`.** Any
-   API key reachable by this app is public — `VITE_*` is inlined at build time.
-   So Apsis must never hold a vendor credential or call a vendor API directly;
-   it POSTs to an endpoint the host operates. Only the command text and a static
-   schema leave the browser — never leads, names, phones, emails or history.
-2. **The grammar's honesty is structural, not promised:** it blanks out every
-   recognised span, so the residue *is* the unrecognised part. The LLM path must
-   earn it the same way — each mapped filter must cite a span that appears
-   verbatim in the input, and `unrecognised` is computed by subtraction. The
-   model's own account of what it understood is not trusted.
+**What ships by default:** nothing changes. With no declaration, `resolveCommand`
+returns the grammar's answer *synchronously* — no promise, no microtask, no
+timer, no request — proven by a 22-command corpus deep-equal against
+`parseCommand`, a `fetch` stub that throws if touched, and a browser test that
+records every request the page makes.
 
-**Acceptance headline:** with no declared interpreter, behaviour is *identical* —
-proven by a corpus deep-equal test against `parseCommand` and an assertion that
-`fetch` is never called, not by inspection.
+**Honesty.** Every filter must cite a span present verbatim in the input, the
+action included (D28); `unrecognised` is computed by subtracting accepted spans,
+never taken from the model. The model's `unmapped` is validated and not
+rendered.
+
+**Security.** No credential, no vendor call, no SDK (D27). The request body is
+`{ text, schema }` and nothing else.
+
+**Still to do:** owner verification on the real machine, and a host endpoint —
+Apsis deliberately cannot supply one. Until a host declares it, the grammar runs
+and this code is inert.
+
+**One deviation from the contract, flagged rather than buried:** the response
+envelope gained an optional `actionSpan`. §G specified provenance for filters
+and left `action` uncited, which would have forced a choice between reporting
+"call" as ignored while agents were being dispatched, or exempting the verb from
+the residue and trusting it silently. Requiring a citation makes one rule cover
+everything — no provenance, no effect (D28).
 
 ## 2. (closed) The four red browser specs — triaged, and one was a real bug
 Found at b96108d, fixed at the checkpoint below. They were **not** all stale, and

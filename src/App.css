@@ -403,6 +403,8 @@ html, body, #root {
 .funnel-l { font-size: 10px; color: var(--muted); }
 
 .command-result { font-size: 12px; }
+/* Which parser answered. Quieter than the result it annotates. */
+.command-note { font-size: 11px; margin: 5px 0 0; }
 .accent-text { color: var(--green); }
 
 .command-examples { display: flex; flex-direction: column; gap: 4px; }
