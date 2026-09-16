@@ -27,6 +27,7 @@
 import { parseCommand, type ParsedCommand } from '../domain/query';
 import {
   InterpreterTimeoutError,
+  InterpreterUnavailableError,
   createHostInterpreter,
   readInterpreterConfig,
   type CommandInterpreter,
@@ -47,6 +48,14 @@ const PREFIX = 'Interpreted with the built-in grammar — ';
 export const NOTE_UNAVAILABLE = `${PREFIX}the language model was unavailable.`;
 export const NOTE_TIMEOUT = `${PREFIX}the language model did not answer in time.`;
 export const NOTE_UNUSABLE = `${PREFIX}the language model returned an answer Apsis could not use.`;
+/** 401. The command still ran; the user simply is not signed in. */
+export const NOTE_SIGN_IN = `${PREFIX}sign in to use the language model.`;
+/**
+ * 503. Deliberately NOT phrased as a logout: the session is intact and the
+ * sign-in service was momentarily unreachable. Telling the user they are signed
+ * out here would be both wrong and alarming (D40).
+ */
+export const NOTE_AUTH_UNAVAILABLE = `${PREFIX}sign-in is temporarily unavailable.`;
 
 export interface ResolveOptions {
   /** Cancellation from the caller. Never used for timeouts — see interpreter.ts. */
@@ -113,6 +122,13 @@ async function interpretThenFallBack(
     // command's result onto the screen.
     if (effective.aborted) throw error;
     if (error instanceof InterpreterTimeoutError) return grammarOutcome(text, NOTE_TIMEOUT);
+    if (error instanceof InterpreterUnavailableError) {
+      if (error.status === 401 || error.status === 403) {
+        return grammarOutcome(text, NOTE_SIGN_IN);
+      }
+      if (error.status === 503) return grammarOutcome(text, NOTE_AUTH_UNAVAILABLE);
+      return grammarOutcome(text, NOTE_UNAVAILABLE);
+    }
     if (error instanceof SyntaxError) return grammarOutcome(text, NOTE_UNUSABLE);
     if (error instanceof Error && error.name === 'InterpretationFormatError') {
       return grammarOutcome(text, NOTE_UNUSABLE);

@@ -405,6 +405,10 @@ html, body, #root {
 .command-result { font-size: 12px; }
 /* Which parser answered. Quieter than the result it annotates. */
 .command-note { font-size: 11px; margin: 5px 0 0; }
+/* The sign-in offer. Quieter still — it is an option, not an obstacle. */
+.command-auth { font-size: 11px; margin: 5px 0 0; }
+.command-auth a { color: var(--accent); text-decoration: none; }
+.command-auth a:hover { text-decoration: underline; }
 .accent-text { color: var(--green); }
 
 .command-examples { display: flex; flex-direction: column; gap: 4px; }

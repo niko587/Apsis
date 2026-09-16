@@ -59,11 +59,21 @@ export class InterpreterTimeoutError extends Error {
   }
 }
 
-/** Thrown for a transport-level refusal: DNS, CORS, offline, non-2xx. */
+/**
+ * Thrown for a transport-level refusal: DNS, CORS, offline, non-2xx.
+ *
+ * Carries the HTTP status when there was one, because the ROUTER needs to tell
+ * three situations apart that all look identical from here: "sign in" (401),
+ * "the sign-in service is briefly unavailable, you are NOT logged out" (503),
+ * and everything else. Without the status the user would be told the language
+ * model was unavailable when in fact they simply need to sign in.
+ */
 export class InterpreterUnavailableError extends Error {
-  constructor(message: string) {
+  readonly status: number | null;
+  constructor(message: string, status: number | null = null) {
     super(message);
     this.name = 'InterpreterUnavailableError';
+    this.status = status;
   }
 }
 
@@ -159,7 +169,10 @@ export function createHostInterpreter(
           signal: controller.signal,
         });
         if (!response.ok) {
-          throw new InterpreterUnavailableError(`endpoint returned ${response.status}`);
+          throw new InterpreterUnavailableError(
+            `endpoint returned ${response.status}`,
+            response.status,
+          );
         }
         // Malformed JSON throws here and the router falls back — a body that is
         // not JSON is not an interpretation.

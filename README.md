@@ -91,16 +91,54 @@ anything else:
   forced tool use will fail every request — the browser falls back to its
   grammar, so nothing breaks for the user, but the interpreter is doing nothing.
 
+### Sign-in
+
+The interpreter endpoint requires an authenticated Apsis identity. **The rest of
+Apsis does not** — the Lead Universe, drill, command grammar, persistence and
+replay all work signed out, and no credential is needed to develop on it. Only
+the metered server resource is gated.
+
+Authentication uses **WorkOS AuthKit**: a hosted sign-in page, a server-to-server
+code exchange, and a session cookie Apsis sets itself. Apsis writes no session
+cryptography — sealing, JWT validation and refresh rotation are the SDK's, which
+is the one place a vetted implementation clearly beats hand-rolled code.
+
+- `@workos-inc/node` is **server-side only**. There is no browser auth SDK, and
+  no WorkOS key, token or cookie password ever reaches the browser.
+- The session cookie is `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, with no
+  `Domain` and the `__Host-` prefix in production. **No token is ever stored in
+  `localStorage`, `sessionStorage` or React state.**
+- Identity is derived from that cookie and nothing else. A forged `x-user-id`,
+  `role` or `organizationId` has no effect whatsoever.
+- **A WorkOS outage is not a logout.** A transient refresh failure (rate limit,
+  timeout, 5xx, network) answers `503` and keeps your session; only a terminal
+  failure signs you out.
+
+```bash
+WORKOS_API_KEY=...            # server-only, never VITE_-prefixed
+WORKOS_CLIENT_ID=...
+WORKOS_COOKIE_PASSWORD=...    # ≥32 chars; node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+WORKOS_REDIRECT_URI=http://localhost:5173/api/auth/callback
+```
+
+See `.env.example` for the full list. Without these, `/api/interpret` **fails
+closed** with a 401 — a misconfigured auth layer refuses rather than evaporates
+— and `npm run dev:api` falls back to a fixed local identity whose code is not
+present in the deployed bundle.
+
 ### Read this before deploying it publicly
 
-- **The endpoint is unauthenticated.** Anyone who can reach it can spend your
-  model budget.
-- **Rate limiting is not authentication.** The per-IP limiter is coarse cost
-  control, and on serverless it is per-instance rather than global.
+- **Rate limiting is not authentication.** The per-IP and per-user limiters are
+  coarse cost control, and on serverless they are per-instance rather than
+  global. Real quotas need durable counters, which need a database Apsis does
+  not yet have.
+- **A stolen session cookie stays usable** until the access token expires — a
+  lifetime configured in the WorkOS dashboard. Clearing the cookie signs out the
+  browser that has it, not a copy someone else took. Closing that window needs a
+  revocation denylist, i.e. the same database.
 - **Set a spend cap at your provider.** It is the only control that cannot be
   argued with.
-- **Authentication is the next milestone.** Until it lands, treat a public
-  deployment as a metered resource you have left unlocked.
+- **`HttpOnly` does not stop an XSS riding the session** — only exfiltrating it.
 - **No live API call has been made yet.** Every test runs against a fake
   provider, so the request and response shapes are asserted against the current
   published API but not yet confirmed against the real one. Run the smoke test

@@ -17,6 +17,29 @@ import { buildSystemPrompt } from './prompt';
 import { parseInterpretation } from '../src/command/parseInterpretation';
 import { seedLeads } from '../src/domain/seed';
 import type { ModelProvider } from './provider';
+import type { AuthResult, Identity } from './auth/identity';
+
+/**
+ * A signed-in identity for every test that is not about authentication.
+ *
+ * Injected rather than mocked at module level, so these tests keep proving what
+ * they were written to prove — the auth-specific behaviour lives in
+ * `auth/*.test.ts`. Note the handler now fails CLOSED: without this, every
+ * request below would be a 401, which is the correct default and is asserted in
+ * `authPipeline.test.ts`.
+ */
+export const TEST_IDENTITY: Identity = {
+  userId: 'user_test',
+  sessionId: 'session_test',
+  organizationId: null,
+  capabilities: new Set(['interpreter:use']),
+  expiresAt: Number.MAX_SAFE_INTEGER,
+};
+
+const allowAll = async (): Promise<AuthResult> => ({
+  status: 'authenticated',
+  identity: TEST_IDENTITY,
+});
 
 const URL_ = 'https://apsis.test/api/interpret';
 
@@ -35,7 +58,7 @@ const fakeProvider = (fn: (text: string, signal: AbortSignal) => Promise<unknown
 const replying = (payload: unknown) => fakeProvider(async () => payload);
 
 const handlerWith = (provider: ModelProvider | null, extra = {}) =>
-  createInterpretHandler({ provider, ...extra });
+  createInterpretHandler({ provider, authenticate: allowAll, ...extra });
 
 const body = async (response: Response) => (await response.json()) as Record<string, unknown>;
 
@@ -361,7 +384,7 @@ describe('privacy', () => {
         } as unknown as Response;
       },
     });
-    await createInterpretHandler({ provider })(post({ text: 'find cold leads in Tampa' }));
+    await createInterpretHandler({ provider, authenticate: allowAll })(post({ text: 'find cold leads in Tampa' }));
 
     expect(sent).toContain('find cold leads in Tampa');
     for (const lead of seedLeads(500)) {
@@ -386,7 +409,7 @@ describe('privacy', () => {
           return { ok: true, status: 200, json: async () => ({ content: [] }) } as unknown as Response;
         },
       });
-      await createInterpretHandler({ provider })(post({ text }));
+      await createInterpretHandler({ provider, authenticate: allowAll })(post({ text }));
     };
     await build('find cold leads');
     await build('find cold leads');
@@ -397,6 +420,7 @@ describe('privacy', () => {
     const entries: unknown[] = [];
     const handler = createInterpretHandler({
       provider: replying({ filters: [{ field: 'stages', value: 'cold', span: 'cold' }] }),
+      authenticate: allowAll,
       log: (entry) => entries.push(entry),
     });
     await handler(post({ text: 'find cold leads for Claire Moreau' }));
@@ -408,8 +432,12 @@ describe('privacy', () => {
     expect(dump).not.toContain('span');
     expect(dump).toContain('interpreted');
     expect(Object.keys(entries[0] as object).sort()).toEqual([
-      'at', 'errorClass', 'latencyMs', 'model', 'outcome', 'providerLatencyMs', 'requestId', 'status',
+      'at', 'errorClass', 'latencyMs', 'model', 'outcome', 'providerLatencyMs',
+      'requestId', 'sessionId', 'status', 'userId',
     ]);
+    // Opaque ids only — never an email, which is never stored (D31/D36).
+    expect(dump).toContain('user_test');
+    expect(dump).not.toContain('@');
   });
 });
 
@@ -428,7 +456,7 @@ describe('the client cannot rewrite what we ask the model', () => {
       },
     });
 
-    await createInterpretHandler({ provider })(
+    await createInterpretHandler({ provider, authenticate: allowAll })(
       post({
         text: 'find cold leads',
         schema: {

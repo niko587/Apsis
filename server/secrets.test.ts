@@ -111,11 +111,21 @@ describe('nothing that ships to the browser can name a credential', () => {
         /anthropic|openai|langchain|llamaindex|ai-sdk|@ai-sdk/i,
       );
     }
-    // And the server added no runtime dependency of any kind.
+    /**
+     * The dependency list, pinned exactly.
+     *
+     * `@workos-inc/node` is the ONE approved addition (D39): authentication
+     * only, server-side only, and justified because session sealing, JWT
+     * validation and refresh rotation are the wrong things to hand-roll. It
+     * changes nothing about D27 — the model path is still `fetch` with no SDK,
+     * which the regex above keeps enforcing. Anything else appearing here has
+     * to be argued for in this test first.
+     */
     expect(Object.keys(pkg.dependencies).sort()).toEqual([
       '@react-three/drei',
       '@react-three/fiber',
       '@react-three/postprocessing',
+      '@workos-inc/node',
       'postprocessing',
       'react',
       'react-dom',

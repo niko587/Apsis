@@ -9,7 +9,7 @@
  * wrong answer, and nothing on screen would tell you.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   describeCommand,
   isEmptyQuery,
@@ -18,6 +18,7 @@ import {
   type FunnelStep,
 } from '../domain/query';
 import { createCommandRunner } from '../command/router';
+import { readInterpreterConfig } from '../command/interpreter';
 import type { LeadEventKind } from '../domain/types';
 import { useApsis } from '../state/store';
 
@@ -52,6 +53,52 @@ interface Outcome {
   interpreterNote: string | null;
 }
 
+/**
+ * What the browser is allowed to know about its own session.
+ *
+ * Deliberately tiny: an opaque id and capabilities. No email, no token, nothing
+ * from the provider — the server decides this shape (`publicSessionOf`) and the
+ * UI only needs to know whether to offer a sign-in link.
+ */
+interface SessionView {
+  authenticated: boolean;
+  userId?: string;
+}
+
+/**
+ * v1 gates the INTERPRETER, not the application.
+ *
+ * So this hook does nothing at all unless a host has declared an interpreter —
+ * with none declared the default build asks nothing, renders nothing new, and
+ * still makes zero network requests, which the browser suite asserts. Gating
+ * the whole app would protect nothing that needs protecting today (the book is
+ * seeded client-side) while breaking the "no credential needed to work on
+ * Apsis" promise. That changes the day real customer data is served from the
+ * server, and not before.
+ */
+function useSession(): { session: SessionView | null; gated: boolean } {
+  const gated = useMemo(() => readInterpreterConfig() !== null, []);
+  const [session, setSession] = useState<SessionView | null>(null);
+
+  useEffect(() => {
+    if (!gated) return;
+    let live = true;
+    void fetch('/api/session', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? (r.json() as Promise<SessionView>) : { authenticated: false }))
+      // A session endpoint that cannot be reached is not an error state: the
+      // grammar still works, so the worst case is showing a sign-in link.
+      .catch(() => ({ authenticated: false }))
+      .then((value) => {
+        if (live) setSession(value);
+      });
+    return () => {
+      live = false;
+    };
+  }, [gated]);
+
+  return { session, gated };
+}
+
 export function CommandBar() {
   const [input, setInput] = useState('');
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -62,6 +109,7 @@ export function CommandBar() {
   const setFocus = useApsis((s) => s.setFocus);
 
   const placeholder = useMemo(() => EXAMPLES[0], []);
+  const { session, gated } = useSession();
 
   /**
    * Owns the abort controller and the generation counter (§J). One per mounted
@@ -185,6 +233,26 @@ export function CommandBar() {
           {running ? 'Running…' : 'Run'}
         </button>
       </form>
+
+      {/* Restrained on purpose: the command bar works signed out, so this is an
+          offer rather than a wall. Rendered only when a host has configured an
+          interpreter — otherwise there is nothing to sign in FOR. */}
+      {gated && session !== null && (
+        <p className="command-auth muted">
+          {session.authenticated ? (
+            <>
+              AI interpretation enabled ·{' '}
+              <a href="/api/auth/logout" data-auth-signout>
+                sign out
+              </a>
+            </>
+          ) : (
+            <a href={`/api/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`} data-auth-signin>
+              Sign in to use AI interpretation
+            </a>
+          )}
+        </p>
+      )}
 
       {outcome && (
         <div className="command-out">

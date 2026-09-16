@@ -221,37 +221,62 @@ const fail = (status: number, code: string, headers?: Record<string, string>): G
   failure: { status, code, headers },
 });
 
-export async function guardRequest(
+/**
+ * Transport guards: everything that is free, plus the IP backstop.
+ *
+ * Split from the body checks so AUTHENTICATION can run between them (D37). The
+ * IP limiter deliberately stays on this side — it is the only limiter that
+ * works before identity exists, so it must refuse a flood without any decrypt
+ * work and throttle session guessing.
+ */
+export async function guardTransport(
   request: Request,
   config: GuardConfig = DEFAULT_GUARD,
   limiter?: RateLimiter,
   now: number = Date.now(),
-): Promise<GuardResult> {
+): Promise<{ ok: true } | { ok: false; failure: GuardFailure }> {
   if (request.method !== 'POST') {
-    return fail(405, 'method_not_allowed', { allow: 'POST' });
+    return fail(405, 'method_not_allowed', { allow: 'POST' }) as { ok: false; failure: GuardFailure };
   }
 
   // Same-origin only. An absent Origin is a non-browser caller (curl, a health
   // check) and is allowed; a PRESENT and wrong one is a cross-site attempt.
   if (config.allowedOrigin) {
     const origin = request.headers.get('origin');
-    if (origin !== null && origin !== config.allowedOrigin) return fail(403, 'cross_origin');
+    if (origin !== null && origin !== config.allowedOrigin) {
+      return fail(403, 'cross_origin') as { ok: false; failure: GuardFailure };
+    }
   }
   const site = request.headers.get('sec-fetch-site');
-  if (site !== null && site !== 'same-origin' && site !== 'none') return fail(403, 'cross_origin');
+  if (site !== null && site !== 'same-origin' && site !== 'none') {
+    return fail(403, 'cross_origin') as { ok: false; failure: GuardFailure };
+  }
 
   const contentType = request.headers.get('content-type') ?? '';
   if (!contentType.toLowerCase().startsWith('application/json')) {
-    return fail(415, 'unsupported_media_type');
+    return fail(415, 'unsupported_media_type') as { ok: false; failure: GuardFailure };
   }
 
   if (limiter) {
     const verdict = limiter.check(clientKey(request), now);
     if (!verdict.allowed) {
-      return fail(429, 'rate_limited', { 'retry-after': String(verdict.retryAfterSeconds) });
+      return fail(429, 'rate_limited', {
+        'retry-after': String(verdict.retryAfterSeconds),
+      }) as { ok: false; failure: GuardFailure };
     }
   }
 
+  return { ok: true };
+}
+
+/**
+ * Body guards. Runs only AFTER authentication has succeeded, so an
+ * unauthenticated request is refused before its payload is even received.
+ */
+export async function guardBody(
+  request: Request,
+  config: GuardConfig = DEFAULT_GUARD,
+): Promise<GuardResult> {
   const body = await readBodyCapped(request, config.maxBodyBytes);
   if (!body.ok) return fail(413, 'payload_too_large');
 
@@ -282,4 +307,22 @@ export async function guardRequest(
   // `schema` is intentionally not read. See prompt.ts — the server builds its
   // request from its own pinned vocabulary, never from the client's.
   return { ok: true, text: trimmed };
+}
+
+/**
+ * Transport then body, with nothing in between.
+ *
+ * Retained for callers that have no identity to check — and as the definition
+ * the original guard tests exercise. The protected endpoint does NOT use this;
+ * it calls the two halves with authentication between them.
+ */
+export async function guardRequest(
+  request: Request,
+  config: GuardConfig = DEFAULT_GUARD,
+  limiter?: RateLimiter,
+  now: number = Date.now(),
+): Promise<GuardResult> {
+  const transport = await guardTransport(request, config, limiter, now);
+  if (!transport.ok) return transport;
+  return guardBody(request, config);
 }

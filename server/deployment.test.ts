@@ -115,14 +115,33 @@ describe('request cancellation is enabled in production', () => {
   });
 
   it('EVERY function in api/ has cancellation enabled, not just the first one', () => {
-    // Adding a second endpoint without cancellation is the realistic way this
-    // silently regresses.
-    const functions = readdirSync(join(ROOT, 'api')).filter((f) => f.endsWith('.ts'));
-    expect(functions.length).toBeGreaterThan(0);
-    for (const file of functions) {
+    // Adding an endpoint without cancellation is the realistic way this
+    // silently regresses — and this test has already caught it once, when the
+    // auth adapters landed.
+    //
+    // Recurses, because `api/auth/login.ts` is a function too. Skips the files
+    // Vercel documents as NOT becoming functions: a leading underscore, a
+    // leading dot, or a `.d.ts` suffix. `api/_shared.ts` is shared code, not an
+    // endpoint, and requiring a config entry for it would be requiring one for
+    // a route that does not exist.
+    const walk = (dir: string, prefix = 'api'): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory()
+          ? walk(join(dir, entry.name), `${prefix}/${entry.name}`)
+          : entry.name.endsWith('.ts') &&
+              !entry.name.startsWith('_') &&
+              !entry.name.startsWith('.') &&
+              !entry.name.endsWith('.d.ts')
+            ? [`${prefix}/${entry.name}`]
+            : [],
+      );
+
+    const functions = walk(join(ROOT, 'api'));
+    expect(functions.length).toBeGreaterThan(1);
+    for (const path of functions) {
       expect(
-        config.functions?.[`api/${file}`]?.supportsCancellation,
-        `api/${file} is missing supportsCancellation`,
+        config.functions?.[path]?.supportsCancellation,
+        `${path} is missing supportsCancellation`,
       ).toBe(true);
     }
   });
@@ -132,16 +151,25 @@ describe('request cancellation is enabled in production', () => {
     expect(rule?.headers).toContainEqual({ key: 'cache-control', value: 'no-cache' });
   });
 
-  it('the adapter stays thin — no logic migrated into the platform file', () => {
-    const adapter = readFileSync(join(ROOT, 'api/interpret.ts'), 'utf8');
-    const code = adapter
-      .split('\n')
-      .filter((l) => {
+  it('every adapter stays thin — no logic migrated into the platform files', () => {
+    const adapters = [
+      'api/interpret.ts',
+      'api/session.ts',
+      'api/auth/login.ts',
+      'api/auth/callback.ts',
+      'api/auth/logout.ts',
+    ];
+    for (const path of adapters) {
+      const adapter = readFileSync(join(ROOT, path), 'utf8');
+      const code = adapter.split('\n').filter((l) => {
         const t = l.trim();
         return t && !t.startsWith('*') && !t.startsWith('/*') && !t.startsWith('//');
       });
-    expect(code.length).toBeLessThanOrEqual(8);
-    expect(adapter).toContain("from '../server/interpret'");
+      // Logic that migrates here stops being covered by server/*.test.ts and
+      // stops running locally.
+      expect(code.length, path).toBeLessThanOrEqual(12);
+      expect(adapter, path).toMatch(/from '\.\.?\/(\.\.\/)?server\//);
+    }
   });
 });
 

@@ -567,3 +567,32 @@ the cookie; dropping it silently loses the rotated token and the next refresh
 fails terminally.
 Forbids: mapping any retryable refresh failure to 401; discarding a rotated
 sealed session; adding a refresh mutex.
+
+## D41 — Authentication fails closed, and the dev identity is injected from outside
+(2026-09-16) Authentication implemented. Three properties are structural rather
+than conventional, and each has a test that would fail if someone undid it.
+**Fails closed.** `createInterpretHandler` takes `authenticate` exactly as it
+takes a model provider, and `null` — the unconfigured case — refuses every
+protected request with a 401. An auth layer that evaporates when misconfigured
+is not an auth layer, and "closed" is the only default where a deployment
+mistake is visible instead of silent.
+**The dev identity is injected, never imported.** `scripts/devIdentity.mjs`
+lives outside `server/` and is passed in by `scripts/dev-interpreter.mjs`. The
+import graph from every `api/` entry point is walked by a test and must never
+reach `scripts/`, so the bypass is absent from the deployed artifact rather than
+disabled in it. A companion test forbids the strings `auth=off`, `AUTH_DISABLED`,
+`SKIP_AUTH` and their relatives anywhere in `server/` or `api/` — the point is
+that there is no switch, not that the switch is off.
+**Every response leaves through one function.** `withCookie` wraps all of them,
+because a rotated `sealedSession` dropped on an error path is a refresh token
+lost and a silent logout an hour later. Tests assert the rotated cookie survives
+a 200, a 403 and a 400.
+Two smaller findings, both caught by existing tests rather than by inspection:
+the D33 "every api/ function has supportsCancellation" test fired the moment the
+auth adapters landed, and had to learn Vercel's documented rule that
+underscore-prefixed files are not functions; and the D27 dependency pin fired on
+`@workos-inc/node`, which is now allowed by name while the LLM-SDK pattern match
+stays exactly as strict.
+Forbids: defaulting authentication to permissive when unconfigured; importing
+the dev identity from `server/` or `api/`; returning a response that bypasses
+`withCookie`.

@@ -1,7 +1,7 @@
 # Current State
 
-_Last updated: 2026-09-16 (authentication contract + security revision;
-previous phase: host interpreter endpoint + deployment hardening)_
+_Last updated: 2026-09-16 (authentication implemented; previous phase: host
+interpreter endpoint + deployment hardening)_
 
 This file is the snapshot an external AI project manager should trust over any
 conversation history. It describes the repository as it actually is.
@@ -11,8 +11,8 @@ conversation history. It describes the repository as it actually is.
 | Check | Status | Command |
 |---|---|---|
 | TypeScript | clean (4 projects: app, node, e2e, server) | `npm run typecheck` |
-| Unit tests | **320 / 320 passing** (19 files) | `npm test` |
-| Browser suite | **48 / 48 passing** | `npm run test:e2e` |
+| Unit tests | **402 / 402 passing** (22 files) | `npm test` |
+| Browser suite | **58 / 58 passing** | `npm run test:e2e` |
 | Lint | exit 0 (warnings only, see below) | `npm run lint` |
 | Production build | green, ~1.27 MB bundle (350 KB gz) | `npm run build` |
 | Runtime console | 0 errors at load and through drill/command flows | — |
@@ -392,11 +392,11 @@ of which would only have failed in production:
    per identity and an amortised five-minute sweep; `RateLimiter.size()` is what
    makes reclamation testable at all.
 
-## Current milestone: authentication and access control (contract only)
+## Authentication and access control (2026-09-16) — IMPLEMENTED
 
-The endpoint is the first thing Apsis has that costs money to call, and it is
-still unauthenticated — the primary production blocker. Contract:
-`docs/CONTRACT_AUTHENTICATION.md`, **not implemented**.
+`POST /api/interpret` now requires a verified identity. Contract:
+`docs/CONTRACT_AUTHENTICATION.md`, met in full. **Never exercised against a real
+WorkOS environment** — see the bottom of this section.
 
 **Approach:** a managed provider (WorkOS AuthKit) with a hosted sign-in page, a
 server-to-server code exchange, and the provider's **sealed session carried in a
@@ -439,6 +439,30 @@ usable until the provider-configured access-token lifetime lapses, because
 `authenticate()` validates locally and WorkOS is only consulted at `refresh()`;
 and rate limits stay per-instance cost control rather than durable quotas. Those
 two are the only things that would justify adding a database.
+
+**Shipped** (D41): `server/auth/{identity,capabilities,cookies,provider}.ts`,
+`api/auth/{login,callback,logout}.ts`, `api/session.ts`,
+`scripts/devIdentity.mjs`, the pipeline order in `server/interpret.ts`, and a
+401/503-aware note plus a restrained sign-in link in the command bar. One
+dependency, `@workos-inc/node@10.13.0`, imported by exactly one file.
+
+Three properties are structural rather than conventional:
+
+- **Fails closed.** Unconfigured authentication refuses every protected request
+  with a 401. An auth layer that evaporates when misconfigured is not one.
+- **The dev identity is injected, never imported.** It lives outside `server/`,
+  and a test walks the import graph from every `api/` entry point to prove it is
+  unreachable — absent from the artifact, not disabled in it. A companion test
+  forbids `auth=off`, `AUTH_DISABLED`, `SKIP_AUTH` and relatives from existing
+  at all.
+- **Every response leaves through one function**, so a rotated `sealedSession`
+  cannot be dropped on an error path — that would lose the refresh token and
+  cause a silent logout an hour later.
+
+**Neither live verification has been run.** No WorkOS credentials and no
+Anthropic key exist in this environment, so the real sign-in flow and the real
+model call are both asserted against fakes only. The exact commands are in the
+README, and running them is the first thing to do with credentials in hand.
 
 **No real-key call has been made.** Request and response shapes are asserted
 against the current published API (model ids, forced `tool_choice`, and the

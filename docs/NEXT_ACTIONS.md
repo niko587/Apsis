@@ -1,7 +1,7 @@
 # Next Actions
 
-_Last updated: 2026-09-16 (authentication contract, security revision).
-Ordered. Each item: what, why now, acceptance, suggested model (spec §2)._
+_Last updated: 2026-09-16 (authentication implemented). Ordered. Each item:
+what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
 - GitHub bootstrap. Remote exists, `main` canonical, `/docs` browsable (D19).
@@ -37,10 +37,13 @@ The **host interpreter endpoint** is implemented and deployment-hardened
 D29–D34), and the one recorded browser flake is closed (D35). No live-provider
 call has been made yet — see §1a.
 
-The current milestone is **authentication for `/api/interpret`** (§1b) — contract
-written and binding at `docs/CONTRACT_AUTHENTICATION.md`, **not yet
-implemented**. Nothing else is open: there are no known failing tests and no
-recorded intermittents.
+**Authentication is implemented** (§1b) — `/api/interpret` now requires a
+verified identity, and fails closed when unconfigured. Nothing else is open:
+there are no known failing tests and no recorded intermittents.
+
+Two verifications remain and **neither has been run**, because no credentials
+exist in this environment: a real WorkOS development sign-in, and the Anthropic
+live smoke test. Exact commands for both are in the README.
 
 ## 0. (closed) Reachability suite over-strictness — FIXED, CI trust restored
 The assertion required an element's whole bounding box inside the viewport,
@@ -175,7 +178,7 @@ a fake provider. **The first thing to do with a key in hand is the smoke test in
 the README** — `npm run dev:api` + `npm run dev`, then one `curl` at
 `/api/interpret`.
 
-## 1b. Authentication and access control — **CURRENT MILESTONE**
+## 1b. (closed) Authentication and access control — IMPLEMENTED, live verification pending
 **MODEL: OPUS.** Contract written and committed:
 **`docs/CONTRACT_AUTHENTICATION.md`** — threat model, provider choice, session
 model, cookie attributes, flow, authorization seam, identity shape, tenant seam,
@@ -242,6 +245,27 @@ because `authenticate()` validates locally and WorkOS is only consulted at
 `refresh()`; and rate limits remain per-instance cost control rather than
 durable quotas. Those two are precisely the things that will justify a database
 — and nothing else in this milestone does.
+
+**Delivered.** `server/auth/{identity,capabilities,cookies,provider}.ts` plus
+four test files, `api/auth/{login,callback,logout}.ts`, `api/session.ts`,
+`scripts/devIdentity.mjs`, the §J pipeline order in `server/interpret.ts`, a
+401/503-aware note in `src/command/{interpreter,router}.ts`, and a restrained
+sign-in affordance in `CommandBar`. One dependency: `@workos-inc/node@10.13.0`,
+imported by exactly one file, enforced by an import scan. Unit 402 (was 320),
+browser 58 (was 48). D41 records what is structural.
+
+**The trigger, still explicit:** v1 gates the interpreter, not the application.
+The moment real customer data is served from the server, the app-wide gate
+becomes mandatory.
+
+## 1d. Next candidates (none started)
+- **Live verification.** A real WorkOS development sign-in and the Anthropic
+  smoke test. Both need credentials this environment does not have.
+- **Durable quotas and instant revocation.** The two things that justify a
+  database, and the two limitations above. Neither is urgent while the only
+  protected resource is a metered API.
+- **Organization/tenant model.** `organizationId` is carried and unused; the
+  seam is ready when agencies are.
 
 ## 1c. (closed) Reachability wheel-stall flake — FIXED (D35)
 `e2e/reachability.spec.ts @1600x1000` failed once, then passed on repeats — the

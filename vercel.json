@@ -1,9 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/interpret.ts": {
-      "supportsCancellation": true
-    }
+    "api/interpret.ts": { "supportsCancellation": true },
+    "api/session.ts": { "supportsCancellation": true },
+    "api/auth/login.ts": { "supportsCancellation": true },
+    "api/auth/callback.ts": { "supportsCancellation": true },
+    "api/auth/logout.ts": { "supportsCancellation": true }
   },
   "headers": [
     {
