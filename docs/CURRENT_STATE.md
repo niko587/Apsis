@@ -130,163 +130,37 @@ tracking.** Bootstrapped 2026-09-15; `NEXT_ACTIONS.md` item 1 is closed.
   matching the pre-existing isomorphic-git commit. There is no global
   identity on this machine.
 
-## Performance findings (2026-09-15) — see `PERFORMANCE_BASELINE.md`
+## Performance — RESOLVED (2026-09-15) — see `PERFORMANCE_BASELINE.md`
 
-The owner reports subjective grade **D** (laggy/unusable) on a 2020 M1
-MacBook Air. A full diagnosis was run; **no optimization has been applied and
-no improvement is claimed.** Headlines:
+**Apsis is smooth on the owner's real 2020 M1 MacBook Air.** After a seven-round
+investigation the owner's final A/B verdict on the shipping build versus
+`?legacyfx=1`: performance **dramatically smoother**, visual difference **tiny
+and still looks just as good**, remaining lag **none — the original problem is
+basically solved**. Round 7 is accepted as the shipping performance baseline,
+and performance is **no longer the project's top blocker**.
 
-- **Leads are ONE `THREE.Points` draw call** — there are no per-lead React
-  components. 29–40 draw calls per frame at every book size. The usual suspect
-  for this symptom is disproven.
-- **`fx=off` is worth 4.2× at the default 4,892 leads** (2.1× at 20k, 2.6× at
-  60k). Bloom's fragment budget computes to ~4× the entire lead field's. GPU
-  fill rate is the **leading hypothesis** — but unprovable here, because this
-  machine's software rasterizer produces that signature regardless.
-- **The hottest JavaScript function in Apsis is a CSS colour-string parser.**
-  `THREE.Color.setStyle`, 273 ms/8 s at 60k leads (~48% of non-rasterizer JS
-  self-time), reached because `LeadField` rewalks the **whole book** on every
-  ingested event (~9/s) and re-parses `'#2f6bff'` per lead. `positionFor`
-  allocates one object per lead on the same path. Real, avoidable, scales
-  badly — but only ~2–3% of main-thread samples at the default book, so
-  probably not what makes the Air feel like D.
-- **Scaling is linear with no cliff** to 60k. The default book is not a
-  scaling problem, which points at fixed per-frame cost.
-- Measured with runtime-injected instrumentation (Playwright `addInitScript` +
-  CDP profiler); **no source file was modified to measure.**
+**Preserve this rendering/compositing architecture.** Two changes did it:
 
-**Round 2 (same day): the fill-rate hypothesis was refuted on real hardware.**
-The owner's M1 result — normal FX difficult to use, `?fx=off` *some* improvement
-but still difficult — means post-processing contributes but is not primary. The
-two machines have genuinely different bottlenecks: here `fx=off` alone restores
-the 60 fps vsync cap (15.7 → 60.2), on the Air it barely helps. **No further
-measurement on this machine can identify the cause on that one.**
+1. **No live backdrop sampling anywhere in shipping CSS.** All four
+   `backdrop-filter: blur()` layers over the WebGL canvas are gone; the glass
+   look is a gradient plus an inset rim highlight and a drop shadow, at an alpha
+   matched to the blurred original's *perceived* density. **Do not reintroduce
+   `backdrop-filter` over the canvas** — that was the bottleneck.
+2. **Bloom renders at half resolution** (`resolutionScale={0.5}`), upsampled
+   through the existing mip chain. The scene still renders at full DPR 2.
 
-So round 2 shipped an instrument rather than a second guess:
-`src/diag/diagnostics.ts` + `src/diag/DiagOverlay.tsx`, a subtractive harness
-(`?diag=1`, `?bench=1`, `?dpr=N`, `?field=off`, `?core=off`, `?feed=off`,
-`?anim=off`) that times `renderer.render()` against the frame interval to
-separate CPU from GPU, and walks the whole matrix automatically in ~90 s.
-**Every flag is off by default; a default page load is byte-identical to the
-shipping product** (verified: same 9 panels, 150 rows, live feed, full scene,
-no overlay). Two facts it already establishes: `render()` CPU time is
-0.3–0.5 ms in *every* configuration, which effectively rules out Three.js
-object-update cost; and `feed=off` is worth ~22% even against a rasterizer that
-dwarfs it, which strengthens the case against the per-event full-book walk.
+Intact and not to be traded away: the 4,892-lead book, Lead Gravity, scoring,
+agents, trails, the raymarched Intelligence Core, bloom, transparency, DPR 2,
+responsive behaviour, the dark cinematic identity.
 
-**Round 3 (same day): the bench median was uninformative, and every candidate
-the instruments can see is now eliminated.** All nine M1 rows returned
-58.8 fps / 17.0 ms — the vsync interval quantised, which a median always is.
-Round 3 therefore measured the tail and the interaction instead: frame-time
-p95/p99/max and >20/33/50/100 ms buckets, `longtask`, Event Timing **input
-latency**, per-code-path spans, and scripted pointer *and drag* sweeps.
-
-Measured at 4,892 leads (pure JS, transfers between machines): full-book
-revision walk 1.7–2.1 ms × ~9/s, `Points.raycast` 0.094 ms (confirmed scanning
-all 4,892 — 596,824 points over 122 calls), settled frame loop 0.063 ms,
-`ingest` 0.055 ms including every synchronous subscriber. **Total ≈ 2.7% of one
-core** — JavaScript cannot account for the owner's lag at this book size.
-Ruled out as primary: CPU/JS, React reconciliation, Zustand, raycasting, the
-revision walk, draw calls, Three.js object updates — and, from the owner's own
-round-2 table, fill rate and post-processing.
-
-**Round 4 (same day): the production build measures HEALTHY on the owner's M1,
-and the owner still reports grade D.** Drag sweep: 901 frames, p99 23 ms, max
-28 ms, **zero** frames over 33 ms, zero long tasks, no input event over 16 ms.
-Idle and pointer sweep similar (p99 26–27 ms). Spans matched this machine
-almost exactly. This is read as evidence the harness measures something other
-than what the owner experiences — **not** that the app is fine.
-
-Measured dev vs production on the same machine with the same harness: app
-spans are **identical** (`revisionWalk` 1.79 vs 1.84 ms, `ingest` 0.05 vs
-0.06 ms), but dev carries **~1.9× the main-thread long-task load** (188–196
-tasks vs 100–106; 14.5–14.8 s vs 7.9 s) and loads 4.3× slower (529 ms / 63
-requests vs 122 ms / 2). The dev penalty — StrictMode double-invoking renders
-and effects, unminified React reconciliation — lands in React's work, which
-**no instrumented span covers**. A dev session can therefore feel much worse
-while every span reads normal.
-
-**Defect disclosed, not patched:** `installLongTaskObserver()` reports
-`count=0` when `observe()` throws, and **Safari implements
-`PerformanceObserver` but not the `longtask` entry type**. Every "0 long tasks"
-line so far is a *false negative* if the runs were in Safari. The report header
-also does not record build mode, so two pasted reports are indistinguishable
-without labelling. Both are one-line fixes, deferred because round 4 was scoped
-to no application-code changes.
-
-**Still no bottleneck confirmed; the owner's report stands unexplained.** Next
-action is the dev-vs-production A/B on the Air plus three environment questions
-(everyday port, Chrome vs Safari, power/display state) — `NEXT_ACTIONS.md`
-item 1.
-
-**Round 5: owner is on Safari; dev ≡ production subjectively, retiring the
-build-mode hypothesis.** Enumerated the full graphics/compositor stack and
-found what every previous round ignored: **four elements layered directly over
-the live WebGL canvas carry `backdrop-filter: blur()`** — `.command-row` and
-`.command-out` at 14px (`App.css:321,363`), `.uv-clusters` and `.uv-skills` at
-6px (`overlay.css:23`). A backdrop filter makes the compositor sample what is
-behind it, blur it and composite — every frame, canvas as source, **after
-`requestAnimationFrame` returns**, where no instrument in this repo can see it.
-
-It is the first hypothesis consistent with *all* surviving evidence: JS cheap
-(~2.7% of a core), frame intervals perfect (p99 23 ms, zero frames >33 ms),
-`fx=off` partial, `field=off`/`core=off` making no difference (**a backdrop
-blur costs the same regardless of what is behind it** — which is precisely why
-every round-2 toggle returned identical numbers), dev ≡ production (same CSS),
-and Safari-specific severity. **It is untested**; `?backdrop=off` decides it in
-about a minute.
-
-Diagnostic correctness fixes: the `longtask` false negative is gone (Safari now
-prints "LONGTASK OBSERVER UNSUPPORTED", never `count=0`), reports carry
-**BUILD MODE** and a capability line (`longtask`, `eventTiming`,
-`gpuTimerQuery`, `fenceSync`, GL renderer), and a presentation section reports
-rAF lateness, polled **WebGL2 fence** GPU-completion latency and input→handler
-latency — with a standing note that **true presentation time is not observable
-from JS in Safari** (no frame-timing API, no timer query).
-
-Shipping stylesheets and visuals are byte-identical; the toggles inject a
-runtime `<style>` because the CSS minifier rewrote an authored override to
-`-webkit-` only, which would have silently disabled the test in Chrome.
-
-**Round 7 (first round to change shipping code).** The M1 matrix showed no
-configuration in distress — baseline mean 17.2 / p95 20 (~59 fps), p99 spanning
-only 23–27 ms across all ten cases, and two cases that *removed* work measuring
-worse (`backdrop=off` p99 58; `dpr=1 fx=off backdrop=off` max 406). That is
-sparse noise, not a ranking. What survived: `fx=off backdrop=off` was cleanest
-(p99 23, max 32, zero frames >33 ms) while keeping all 4,892 leads, the Core and
-DPR 2; `core=off` and `field=off` did not beat `fx=off`; `dpr=1` produced no
-dramatic change despite ~4× fewer fragments; and round 5's subjective A/B stands.
-
-Two implementation changes, no visual redesign:
-1. **All four `backdrop-filter` blurs removed from shipping CSS** (the built
-   bundle now contains zero live backdrop sampling). The glass look is rebuilt
-   from gradients, an inset rim highlight and a drop shadow. Alpha is
-   *higher* than the original on purpose — a blur hides what is behind it, and
-   at the original alpha stars and ring arcs read crisply through the panel,
-   which looked cheaper; the final values match the blurred original's
-   *perceived* density.
-2. **Bloom renders at half resolution** (`resolutionScale={0.5}`) — a quarter
-   of the fragments, upsampled through the existing mip chain. The scene still
-   renders at full DPR 2; `levels`, `intensity`, `radius` and both luminance
-   parameters are unchanged.
-
-Verified by pixel diff at DPR 2 with the feed and ambient motion frozen: full
-page **mean difference 0.42/255 (0.16%)**, 0.68% of pixels differing by >8.
-**`?legacyfx=1` reproduces the previous appearance pixel-for-pixel (mean 0, max
-0)** — an exact A/B control.
-
-**No performance improvement is claimed.** This machine measured the optimised
-path *slower* (330 vs 275 ms mean) on a 32–38 frame sample under a software
-rasterizer and session-long load — far too noisy to resolve a bloom-resolution
-change in either direction. The owner's M1 remains the authority.
-
-`src/domain/**`, `src/state/**`, `src/orchestrator/**` and `src/ui/**` are
-unchanged; only the two stylesheets, one `Universe.tsx` prop and the
-diagnostics module were touched.
-
-Next action: the owner's A/B — `/` versus `/?legacyfx=1` in Safari, judging
-both smoothness **and** whether any visual difference is perceptible.
-See `NEXT_ACTIONS.md` item 1.
+Worth remembering for the next investigation: **the cause was in the compositing
+stage, which no JavaScript instrument can observe.** Frame intervals looked
+healthy in every round; every subtractive scene toggle came back unchanged
+(a backdrop blur costs the same regardless of what is behind it); and the round-6
+matrix on real hardware reported no configuration in distress. What located it
+was reading the CSS, and the owner's subjective A/B — a human judgment that
+outranked a clean-looking sample and was right. `?legacyfx=1` is preserved as
+the reference control.
 
 ## Known issues and unverified claims
 

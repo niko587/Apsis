@@ -1189,3 +1189,74 @@ performance problem at all. It has never been tested, it costs nothing to try,
 and if the owner's complaint is specifically "the camera feels heavy / keeps
 moving after I let go" rather than "the picture stutters", it is a better
 explanation than anything measured so far.
+
+---
+
+# CLOSEOUT — Round 7 accepted as the shipping baseline
+
+_2026-09-15. Verified on the owner's real 2020 M1 MacBook Air, Safari._
+
+## Owner's final A/B verdict
+
+Optimised shipping vs `?legacyfx=1` (the pixel-identical previous pipeline):
+
+| question | verdict |
+|---|---|
+| **Performance** | **A — dramatically smoother** |
+| **Visual quality** | **B — tiny visual difference, still looks just as good** |
+| **Remaining lag** | **A — feels smooth; the original lag problem is basically solved** |
+
+**Round 7 is accepted as the new shipping performance baseline.** The
+investigation that ran from round 1 to round 7 is closed.
+
+## What actually fixed it
+
+Two implementation changes, no visual redesign, no feature loss:
+
+1. **All four `backdrop-filter: blur()` layers removed from shipping CSS.** The
+   built bundle contains zero live backdrop sampling. A backdrop filter makes
+   the compositor read back what is behind the element, blur it and
+   recomposite — every frame, with the live WebGL canvas as the source, *after*
+   `requestAnimationFrame` returns. Glass rebuilt from a gradient, an inset rim
+   highlight and a drop shadow, at a higher alpha chosen to match the blurred
+   original's *perceived* density.
+2. **Bloom renders at half resolution** (`resolutionScale={0.5}`) — a quarter of
+   the fragments, upsampled through the existing mip chain. The scene still
+   renders at full DPR 2.
+
+Everything the product is made of survived: 4,892 leads, Lead Gravity, the
+raymarched Intelligence Core, agent arcs, trails, bloom, transparency, DPR 2,
+the dark cinematic identity.
+
+## The methodological lesson, recorded because it was expensive
+
+**The bottleneck was in the part of the pipeline no JavaScript instrument can
+see, and it evaded six rounds of increasingly careful measurement.**
+
+- Frame intervals looked perfect throughout — rAF is not gated on compositing.
+- Every subtractive scene toggle (`field=off`, `core=off`, `dpr=1`) came back
+  unchanged, because **a backdrop blur costs the same regardless of what is
+  behind it**. The instruments were removing the wrong things.
+- The M1 matrix in round 6 showed *no configuration in distress* (p99 23–27 ms
+  across all ten cases), and two cases that removed work measured worse. Taken
+  literally it said "nothing is wrong".
+- What actually located it: **reading the CSS**, and **the owner's subjective
+  A/B** in round 5. A human saying "that is noticeably better" outranked a
+  clean-looking 8-second sample, and was right.
+
+The final numbers never did move much on the measuring machine — this session's
+own performance A/B reported the optimised path *slower* (330 vs 275 ms), which
+was noise. **No performance claim was ever made from this machine; the owner's
+hardware decided it.** That was the correct division of authority and it is
+worth keeping for the next investigation.
+
+## Kept for reference
+
+- `?legacyfx=1` — restores the previous pipeline exactly (verified
+  pixel-for-pixel: mean diff 0, max 0). Preserved as the reference control.
+- The full round 1–7 history above, including the refuted hypotheses
+  (post-processing as primary, dev-build, Safari-specific) and the two
+  diagnostic bugs caught in validation. Not rewritten, not pruned.
+- The diagnostic modes (`?diag=1`, `?bench=1`, `?jank=1`, `?sweep=`,
+  `?matrix=1`, `?dpr=N`, `?field/core/feed/anim=off`, `?backdrop=off`), all
+  zero-cost when absent.

@@ -85,9 +85,7 @@
     "reachability is proven with real input events (wheel + elementFromPoint + click), never scrollIntoView or Playwright auto-scroll (D20)",
     "never rewrite published history on main without owner instruction (D19)"
   ],
-  "blocked": [
-    { "what": "Run ?matrix=1 in Safari (~2min, one URL, self-driving) to rank the remaining contributors", "on": "owner's hardware (2020 M1 MacBook Air, Safari, dpr 2)", "ref": "NEXT_ACTIONS.md#1" }
-  ],
+  "blocked": [],
   "performance": {
     "baseline": "docs/PERFORMANCE_BASELINE.md (2026-09-15)",
     "owner_report": "subjective grade D on 2020 M1 MacBook Air",
@@ -128,8 +126,16 @@
       "capability line: longtask, eventTiming, gpuTimerQuery, fenceSync, GL version, renderer string",
       "?backdrop=off and ?overlay=off toggles, injected as a runtime <style> because the CSS minifier rewrote an authored backdrop-filter override to -webkit- only (would have silently disabled the test in Chrome); shipping stylesheets byte-identical"
     ],
-    "primary_bottleneck": "UNKNOWN — one strong untested hypothesis (backdrop-filter compositing). Decided by the Safari ?backdrop=off A/B",
-    "optimization_applied": "none"
+    "primary_bottleneck": "RESOLVED — CSS backdrop-filter compositing over the live WebGL canvas (primary) plus full-resolution bloom (secondary). Confirmed by the owner's A/B on real hardware, not by this machine's numbers",
+    "resolution": "round 7 accepted as shipping baseline. Owner verdict on 2020 M1 MacBook Air / Safari: performance DRAMATICALLY SMOOTHER, visual difference TINY and still looks just as good, original lag problem BASICALLY SOLVED",
+    "shipping_changes": [
+      "all four backdrop-filter:blur() layers removed from shipping CSS — zero live backdrop sampling in the built bundle; glass rebuilt from gradient + inset rim + drop shadow at an alpha matched to the blurred original's perceived density",
+      "Bloom resolutionScale=0.5 — quarter the fragments, upsampled through the existing mip chain; scene still renders at full DPR 2"
+    ],
+    "do_not_regress": "never reintroduce backdrop-filter over the WebGL canvas; do not lower DPR, reduce the 4,892-lead book, simplify or remove the Intelligence Core, or change OrbitControls damping",
+    "reference_control": "?legacyfx=1 restores the previous pipeline pixel-for-pixel (mean diff 0, max 0) — preserved",
+    "lesson": "the bottleneck sat in the compositing stage, which no JavaScript instrument can observe. Frame intervals looked healthy in every round; every subtractive scene toggle returned unchanged because a backdrop blur costs the same regardless of what is behind it; the round-6 matrix on real hardware showed no configuration in distress. What located it was reading the CSS and the owner's subjective A/B",
+    "optimization_applied": "round 7 (backdrop removal + half-resolution bloom), accepted"
   },
   "repo": {
     "remote": "git@github.com:niko587/Apsis.git",
