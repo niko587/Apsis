@@ -1,6 +1,6 @@
 # Next Actions
 
-_Last updated: 2026-09-16 (reachability flake closed). Ordered. Each item:
+_Last updated: 2026-09-16 (authentication contract). Ordered. Each item:
 what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
@@ -37,8 +37,10 @@ The **host interpreter endpoint** is implemented and deployment-hardened
 D29–D34), and the one recorded browser flake is closed (D35). No live-provider
 call has been made yet — see §1a.
 
-The current milestone is **authentication for `/api/interpret`** (§1b). Nothing
-else is open: there are no known failing tests and no recorded intermittents.
+The current milestone is **authentication for `/api/interpret`** (§1b) — contract
+written and binding at `docs/CONTRACT_AUTHENTICATION.md`, **not yet
+implemented**. Nothing else is open: there are no known failing tests and no
+recorded intermittents.
 
 ## 0. (closed) Reachability suite over-strictness — FIXED, CI trust restored
 The assertion required an element's whole bounding box inside the viewport,
@@ -173,11 +175,51 @@ a fake provider. **The first thing to do with a key in hand is the smoke test in
 the README** — `npm run dev:api` + `npm run dev`, then one `curl` at
 `/api/interpret`.
 
-## 1b. Next: authentication before any public deployment — **CURRENT MILESTONE**
-The endpoint works and is deliberately not safe to expose. Until identity exists
-at the boundary, a public URL is a metered resource left unlocked. Scope: who
-may call `/api/interpret`, how the browser proves it, and what the limiter keys
-on once it has something better than an IP.
+## 1b. Authentication and access control — **CURRENT MILESTONE**
+**MODEL: OPUS.** Contract written and committed:
+**`docs/CONTRACT_AUTHENTICATION.md`** — threat model, provider choice, session
+model, cookie attributes, flow, authorization seam, identity shape, tenant seam,
+middleware order, 401/403 semantics, CSRF, rate limiting after identity,
+logging, local development, CI identity, client UX, file boundaries, 18 unit +
+7 browser tests, acceptance criteria, sequence, and the implementation prompt
+in §Y.
+
+The endpoint works and is deliberately not safe to expose: until identity exists
+at the boundary, a public URL is a metered resource left unlocked.
+
+**The recommendation, and why it is not the popular answer.** A managed provider
+(WorkOS AuthKit) with a **hosted sign-in page**, a server-to-server code
+exchange, and a session cookie **Apsis seals itself** with `node:crypto`. No
+browser SDK, no password handling, **no Apsis database, no new dependency**. The
+deciding criterion was not DX — it was what happens when agencies arrive: every
+self-hosted path means building organization membership, invitations and roles
+by hand, and a database, at exactly the moment the product is trying to sell.
+The provider's token already carries `sub`, `sid`, `org_id`, `role` and
+`permissions`, so teams are a configuration change behind one seam.
+
+**Three decisions worth arguing with:**
+1. **Identity is derived, never received (D36).** Only the sealed cookie decides
+   who you are; forged headers are ignored, and a test proves it.
+2. **Authenticate before reading the body (D37).** An unauthenticated request is
+   refused before its payload arrives, which makes "never reaches the provider"
+   structural. The IP limiter stays *in front of* auth as the pre-identity
+   shield; per-user limiting is added on top, not substituted.
+3. **The dev bypass is absent, not disabled (D38).** It lives outside `server/`,
+   is imported only by `scripts/`, and is therefore not in the production
+   bundle. No `?auth=off`, no environment flag — an import-graph test asserts it.
+
+**v1 gates the interpreter, not the application.** Gating the whole app would
+protect nothing that needs protecting today and would break the "no credential
+needed to work on Apsis" promise. **The trigger for changing that is explicit:
+the moment any real customer data is served from the server, the app-wide gate
+becomes mandatory.**
+
+**Two honest limitations, recorded now rather than discovered later:** a stolen
+cookie stays usable for up to 15 minutes, because with no Apsis-owned store the
+provider is only consulted at the refresh boundary; and rate limits remain
+per-instance cost control rather than durable quotas. Those two are precisely
+the things that will justify a database — and nothing else in this milestone
+does.
 
 ## 1c. (closed) Reachability wheel-stall flake — FIXED (D35)
 `e2e/reachability.spec.ts @1600x1000` failed once, then passed on repeats — the

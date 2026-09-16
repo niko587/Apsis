@@ -96,6 +96,10 @@
     "Apsis holds no model credential and calls no vendor API: model access is a host-declared endpoint, the payload is the command text plus static vocabulary, and no LLM SDK may enter package.json (D27)",
     "no interpreted clause is applied without a span present verbatim in the user's input — filters and the action alike — and unrecognised language is computed by subtracting accepted spans, never read from the model's own report (D28)",
     "with no interpreter declared, resolveCommand returns the grammar's result synchronously: no promise, no timer, no request (CONTRACT_LLM_COMMAND_PARSING §E)",
+    "identity is derived from Apsis's own sealed session cookie and NEVER from a request header, query parameter or body: userId, organizationId, roles and capabilities sent by the browser are ignored (D36)",
+    "authorization is one question at every endpoint — can(identity, capability) — so roles enter in capabilitiesFor() and no endpoint learns what a role is (D36)",
+    "on a protected endpoint the IP limiter runs BEFORE authentication and authentication runs BEFORE the request body is read, so an unauthenticated request is refused before its payload arrives (D37)",
+    "a development auth bypass must be ABSENT from the production artifact, not disabled by a flag: it lives outside server/, is imported only by scripts/, and an import-graph test asserts it is unreachable from api/ (D38)",
     "the interpreter endpoint is not a trusted component: forced tool use narrows model output, but the browser validator governs what reaches LeadQuery and the server trims for size and shape only — never re-deciding truth (D29)",
     "the client's posted `schema` is ignored; the server builds its prompt from its own pinned COMMAND_SCHEMA import, and unknown top-level keys are rejected rather than absorbed (D30)",
     "command text, prompts, model output and envelopes are never logged; logs carry codes, latencies, token counts and error classes (D31)",
@@ -106,13 +110,16 @@
     "Apsis is a browser-only SPA with no server, so any API key reachable by it is public: it must never hold a vendor credential or call a vendor API directly. Model access goes through a host-declared endpoint, and only the user's command text plus a static schema ever leaves the browser — never leads, names, phones, emails, health information or history (CONTRACT_LLM_COMMAND_PARSING §L)",
     "an LLM may never be trusted to report what it failed to understand: every mapped filter must cite a span present verbatim in the input, and unrecognised text is computed by subtracting verified spans — the same way parseCommand earns it (CONTRACT_LLM_COMMAND_PARSING §H)"
   ],
-  "blocked": [],
+  "blocked": ["public deployment — the endpoint is unauthenticated; see current_milestone"],
   "current_milestone": {
-    "name": "authentication for /api/interpret",
-    "contract": "not yet written",
-    "status": "NOT STARTED — the endpoint is implemented and deliberately not safe to expose publicly until identity exists at the boundary",
+    "name": "authentication and access control for /api/interpret",
+    "contract": "docs/CONTRACT_AUTHENTICATION.md",
+    "status": "contract written and binding, NOT implemented. The endpoint is implemented and deliberately not safe to expose publicly until identity exists at the boundary",
+    "approach": "managed provider (WorkOS AuthKit) with a hosted sign-in page, server-to-server code exchange, and a session cookie Apsis seals itself with node:crypto. No browser SDK, no password handling, NO APSIS DATABASE and no new dependency. Chosen on what happens when agencies arrive: every self-hosted path means building org membership, invitations and roles by hand — and a database — at the moment the product is trying to sell. The provider token already carries sub/sid/org_id/role/permissions",
+    "shape": "identity is derived from Apsis's sealed cookie and never from a header or body (D36); the order is method->origin->content-type->IP limit->authenticate->authorize->per-user limit->body cap->parse->provider, so authentication precedes reading the body (D37); the dev identity lives outside server/, is imported only by scripts/, and is absent from the production bundle rather than disabled by a flag (D38)",
+    "v1_scope": "gates the INTERPRETER, not the application — the default build still needs no credential and still makes zero requests. TRIGGER for changing that: the moment any real customer data is served from the server, the app-wide gate becomes mandatory",
     "previous_milestone": "host interpreter endpoint — IMPLEMENTED and deployment-hardened (D29-D34). POST /api/interpret, same origin, Node 22, plain Request->Response in server/ with a 3-line adapter in api/; Anthropic via fetch with forced tool use; no SDK and no new dependency so D27 stands; default model claude-haiku-4-5-20251001 via APSIS_MODEL. Deployment review closed three defects: temperature:0 would have made APSIS_MODEL=claude-sonnet-5 a hard 400 (no sampling parameters are sent now, on any model, D32); Vercel request cancellation is opt-in per path and is now enabled in vercel.json, without which abandoned requests keep running and are billed (D33); and the rate limiter cleanup ran after the push so it could never fire, leaking an identity table (D34). NO REAL-KEY CALL HAS BEEN MADE — every test uses a fake provider, so the wire format is asserted against the current published API but not confirmed against the live one. The README carries the exact smoke-test command",
-    "honest_gap": "the endpoint is unauthenticated and backed by a metered vendor key: rate limiting, size caps, same-origin checks and a vendor spend cap are cost control, not access control. Authentication is the NEXT milestone and must be stated in the README before any public URL exists"
+    "honest_gap": "still unauthenticated until this milestone ships. Two limitations are designed in and recorded rather than hidden: a stolen session cookie stays usable for up to 15 minutes, because with no Apsis-owned store the provider is only consulted at the refresh boundary; and rate limits remain per-instance cost control rather than durable quotas. Those two are the ONLY things that would justify adding a database, and neither is needed for v1"
   },
   "performance": {
     "baseline": "docs/PERFORMANCE_BASELINE.md (2026-09-15)",

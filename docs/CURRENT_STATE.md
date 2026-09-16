@@ -1,7 +1,7 @@
 # Current State
 
-_Last updated: 2026-09-16 (host interpreter endpoint implemented; previous
-phase: opt-in LLM command parsing)_
+_Last updated: 2026-09-16 (authentication contract; previous phase: host
+interpreter endpoint + deployment hardening)_
 
 This file is the snapshot an external AI project manager should trust over any
 conversation history. It describes the repository as it actually is.
@@ -391,6 +391,41 @@ of which would only have failed in production:
    the identity table grew for the life of an instance. Replaced with one map
    per identity and an amortised five-minute sweep; `RateLimiter.size()` is what
    makes reclamation testable at all.
+
+## Current milestone: authentication and access control (contract only)
+
+The endpoint is the first thing Apsis has that costs money to call, and it is
+still unauthenticated — the primary production blocker. Contract:
+`docs/CONTRACT_AUTHENTICATION.md`, **not implemented**.
+
+**Approach:** a managed provider (WorkOS AuthKit) with a hosted sign-in page, a
+server-to-server code exchange, and a session cookie **Apsis seals itself** with
+`node:crypto`. No browser SDK, no password handling, **no Apsis database and no
+new dependency**. Chosen on what happens when agencies arrive rather than on DX:
+every self-hosted path means hand-building organization membership, invitations
+and roles — and a database — at the moment the product is trying to sell, while
+the provider's token already carries `sub`, `sid`, `org_id`, `role` and
+`permissions`.
+
+**Three decisions (D36–D38):** identity is derived from the sealed cookie and
+never received from the browser; the IP limiter runs before authentication and
+authentication runs before the request body is read, so an unauthenticated
+request is refused before its payload arrives; and the dev bypass is *absent*
+from the production bundle rather than disabled by a flag — no `?auth=off`, no
+environment switch, proven by an import-graph test.
+
+**v1 gates the interpreter, not the application.** Gating the whole app would
+protect nothing that needs protecting today — the lead book is seeded
+client-side with no real customer data — and would break the "no credential
+needed to work on Apsis" promise. The trigger for changing that is written down:
+the moment real customer data is served from the server, the app-wide gate
+becomes mandatory.
+
+**Two limitations designed in and recorded, not hidden:** a stolen cookie stays
+usable for up to 15 minutes, because with no Apsis-owned store the provider is
+only consulted at the refresh boundary; and rate limits stay per-instance cost
+control rather than durable quotas. Those two are the only things that would
+justify adding a database.
 
 **No real-key call has been made.** Request and response shapes are asserted
 against the current published API (model ids, forced `tool_choice`, and the

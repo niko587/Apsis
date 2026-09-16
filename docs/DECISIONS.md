@@ -458,3 +458,57 @@ No assertion was weakened — the caller still requires the click point on scree
 the hit test to resolve to the target, and a real click to land.
 Forbids: counting stalls, raising a stall threshold, or adding a sleep, to
 paper over a container whose size is still changing.
+
+## D36 — Identity is derived, never received
+(2026-09-16) Authentication contract. The server reads `userId`,
+`organizationId`, roles and capabilities from ONE place: Apsis's own sealed
+session cookie, decrypted with a server-only key. A header, query parameter or
+body field carrying any of them is ignored — not rejected with a helpful
+message, ignored — and a test asserts forged values change nothing.
+Capabilities are derived server-side by `capabilitiesFor(claims)` and never
+stored in the cookie as a grant the browser could influence. Authorization is
+one question at every endpoint — `can(identity, capability)` — so roles enter in
+one function rather than at every call site, and no endpoint ever learns what a
+role is. v1 has exactly one capability, `interpreter:use`, because there is
+nothing yet to differentiate; the seam is the point, not the matrix.
+Forbids: trusting any browser-supplied identity claim; branching on roles inside
+an endpoint; storing an email in the session.
+
+## D37 — Authenticate before reading the body
+(2026-09-16) The protected pipeline is: method → origin → content-type → IP
+limit → authenticate → authorize → per-user limit → body cap → parse →
+provider. Two placements are load-bearing. The **IP limit precedes
+authentication**, so an unauthenticated flood is refused without decrypt work
+and session guessing is throttled. **Authentication precedes reading the body**,
+so an unauthenticated request is rejected before its payload is even received —
+which makes "unauthenticated requests never reach the provider" a structural
+property rather than something to be checked at the end.
+The IP backstop is kept, not replaced: it is the only limiter that works before
+identity exists, and removing it would leave the cheapest attack the least
+limited. Per-user limiting is added on top because users share IPs behind office
+NAT and one user roams across many. Both remain cost control, not quotas —
+durable counters are one of only two things that would justify a database, the
+other being instant revocation.
+Forbids: reading a request body before authentication on a protected endpoint;
+removing the IP tier; treating a 429 as an auth signal.
+
+## D38 — A development bypass must be absent, not disabled
+(2026-09-16) The dev identity lives in `scripts/devIdentity.mjs`, outside
+`server/`, imported only by `scripts/dev-interpreter.mjs` and injected through
+the `authenticate` option the handler already accepts. `api/interpret.ts`
+imports nothing from `scripts/`, so the deployed bundle does not contain the
+code at all — there is no flag to set, no variable to misconfigure and no
+`?auth=off`. An import-graph test asserts `scripts/` is unreachable from the
+production entry point.
+An environment check is not structural: it fails open if a variable is set
+wrongly, and the code is still there to be reached. Absence is the only version
+of this that cannot be misconfigured.
+Related: v1 gates the INTERPRETER, not the application. Gating the whole app
+would protect nothing that needs protecting — the lead book is seeded
+client-side with no real customer data — while breaking the "no credential
+needed to work on Apsis" promise and putting a wall in front of a demo whose
+value is being immediately visible. **The trigger for changing that is explicit:
+the moment any real customer data is served from the server, the app-wide gate
+becomes mandatory.**
+Forbids: a query parameter or environment variable that disables authentication;
+shipping dev-auth code in a production artifact.
