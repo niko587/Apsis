@@ -23,6 +23,7 @@ import { useReducedMotion } from '../ui/useReducedMotion';
 import { matchesPath, type PathStep } from './clusters';
 import { readDrillPath } from '../state/drillStore';
 import { PROBE, bump, noteInputToSubmit, notePointerEvent, span } from '../diag/diagnostics';
+import { isIndividualFocus } from './SelectedLeadFocus';
 
 /**
  * How fast a lead slides to its new orbit, in "fraction of remaining distance
@@ -390,7 +391,12 @@ export function LeadField() {
     const marker = markerRef.current;
     if (marker) {
       const idx = selectedId ? (readIndexOf().get(selectedId) ?? -1) : -1;
-      marker.visible = idx >= 0;
+      // §14: at full drill depth the SelectedLeadFocus reticle owns the
+      // emphasis — two rings on one lead reads as clutter, so this small
+      // tier-1 marker stands down while tier-2 focus is active. Same
+      // predicate as the reticle, so exactly one of them shows at a time.
+      const tier2 = idx >= 0 && isIndividualFocus(leads.get(selectedId!), drillPath);
+      marker.visible = idx >= 0 && !tier2;
       if (idx >= 0) {
         marker.position
           .set(current[idx * 3], current[idx * 3 + 1], current[idx * 3 + 2])

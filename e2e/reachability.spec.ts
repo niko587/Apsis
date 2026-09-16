@@ -155,6 +155,15 @@ async function wheelIntoView(
   );
 
   let geometry = await geometryOf(target);
+  // Consecutive ticks in which the wheel moved nothing. Bailing on the FIRST
+  // stalled tick was a race: with the live feed running, the rail can be at a
+  // momentary bottom when the wheel fires, then grow (an appointment lands,
+  // LeadDetail fills on hover) — leaving the target a few px below a fold that
+  // scrolling could now reach. Three stalls distinguishes "genuinely cannot
+  // scroll" from "briefly at the bottom of a living document"; the D12
+  // regression (overflow: hidden) never moves scrollTop at all, so it still
+  // fails immediately at 3 ticks with reachable=false.
+  let stalls = 0;
   for (let ticks = 1; ticks <= 40; ticks++) {
     if (geometry.reachable) return { geometry, ticks: ticks - 1 };
 
@@ -166,7 +175,8 @@ async function wheelIntoView(
     const after = await railScrollTop(rail);
 
     geometry = await geometryOf(target);
-    if (before === after) return { geometry, ticks };
+    stalls = before === after ? stalls + 1 : 0;
+    if (stalls >= 3) return { geometry, ticks };
   }
   return { geometry, ticks: 40 };
 }

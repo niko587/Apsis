@@ -16,6 +16,7 @@ import { CameraKeys } from './CameraKeys';
 import { CameraRig } from './CameraRig';
 import { SkillRing } from './SkillRing';
 import { UniverseOverlay } from './UniverseOverlay';
+import { SelectedLeadCard, SelectedLeadFocus } from './SelectedLeadFocus';
 import { APOAPSIS } from '../domain/gravity';
 import { DIAG, LEGACY_FX, installRenderProbe } from '../diag/diagnostics';
 
@@ -73,6 +74,10 @@ export function Universe() {
       <AgentNetwork />
       <SkillRing />
       {DIAG.core && <IntelligenceCore />}
+      {/* §14: the reticle that resolves an individually-focused lead. One
+          mesh, one draw call, raycast-invisible; sits before the composer so
+          its additive arcs ride the same bloom the lead sprites do. */}
+      <SelectedLeadFocus />
       <CameraKeys />
       <CameraRig />
       {/* Post pipeline. Selectivity is by luminance, which in this scene IS
@@ -117,6 +122,9 @@ export function Universe() {
     {/* Real DOM (breadcrumb, skills). Portalled OUT of this aria-hidden
         wrapper — see UniverseOverlay. */}
     <UniverseOverlay />
+    {/* §14: the in-scene confirmation card. aria-hidden — the announcer and
+        the rail already speak; this is spatial confirmation, not a dashboard. */}
+    <SelectedLeadCard />
     </>
   );
 }

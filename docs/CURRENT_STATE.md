@@ -204,6 +204,37 @@ registry-complete but not in `DRILL_SEQUENCE`, so they are not reachable from
 the current linear drill UI — the same position `temperature` has always been
 in. Exposing a dimension picker is UI work, not this milestone.
 
+## §14 spatial individual transition complete (2026-09-16)
+
+**The drill journey now ends somewhere.** At full drill depth, selecting a lead
+resolves it spatially: the camera completes its approach onto the lead's live
+rendered position (the old rig leaned 45% and stopped), a single shader-drawn
+reticle rings the lead in its own stage colour — two fine rings, three slowly
+orbiting arc segments, a soft halo, all riding the same bloom the sprites do —
+and a compact glass card tracks it in screen space with name, stage, score,
+segment · location and the next best action. The rail keeps every detail;
+Escape unwinds focus first, then the drill, exactly as before.
+
+Implementation is the contract's shape (`docs/CONTRACT_14_SPATIAL_INDIVIDUAL.md`):
+- **No new state.** Focus = selection ∧ full depth ∧ cluster membership
+  (`isIndividualFocus`, shared by reticle, card, camera and the tier-1 marker,
+  which stands down while the reticle has the subject).
+- **Two tiers preserved** — selecting from the list at GLOBAL still never
+  flies the camera.
+- A lead whose score carries it out of the drilled cluster mid-focus dissolves
+  focus to the cluster framing rather than being chased.
+- **+1 draw call at focus** (measured 30 → 31; budget was +2). Zero per-frame
+  allocation; one DOM transform write per frame; card measurements throttled
+  to every 20th frame.
+- Reduced motion: camera still arrives (rate 24), orbits and pulse freeze,
+  card appears without animation. Card is `aria-hidden`; SelectionAnnouncer
+  remains the single announcer (asserted).
+- New: `src/universe/SelectedLeadFocus.tsx`; camera leg in `CameraRig`
+  (`INDIVIDUAL_DIST = APOAPSIS·0.44`, slight phi lift, settling re-armed on
+  focus enter/leave/retarget); 9 unit tests + 7-case browser spec
+  (`e2e/spatial-focus.spec.ts`) driving the deterministic
+  West → Colorado → Colorado Springs → Supplemental → Claire Moreau journey.
+
 ## In flight right now
 
 Nothing mid-edit. The working tree is consistent and all checks are green.

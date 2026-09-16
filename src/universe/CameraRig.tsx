@@ -43,6 +43,19 @@ const HOME_PHI = Math.acos(0.72 / Math.hypot(0.72, 1.32));
 const MIN_DIST = APOAPSIS * 0.36;
 const MAX_DIST = APOAPSIS * 1.4;
 
+/**
+ * §14 — how close the camera commits when a single lead is the destination.
+ *
+ * Chosen just above MIN_DIST (and therefore above OrbitControls.minDistance,
+ * which stays untouched): close enough that one sprite plus its reticle owns
+ * the frame, far enough that the cluster's other members stay in view behind
+ * it — the point of §15's recede-don't-remove survives the arrival.
+ */
+const INDIVIDUAL_DIST = APOAPSIS * 0.44;
+/** The gaze lifts slightly at the individual level: meeting the lead, not
+ *  inspecting it from above. Applied on top of the depth-derived phi. */
+const INDIVIDUAL_PHI_LIFT = 0.16;
+
 interface ControlsLike {
   target: THREE.Vector3;
   update: () => void;
@@ -103,6 +116,12 @@ export function CameraRig() {
   const lastPath = useRef<readonly PathStep[] | null>(null);
   /** True while the camera position is still travelling to a new framing. */
   const settling = useRef(false);
+  /**
+   * §14: the lead currently owning individual focus, or null. Tracked so that
+   * entering, leaving AND retargeting focus all re-arm `settling` — the move
+   * must animate in every direction, never cut (contract §C.7).
+   */
+  const lastFocusId = useRef<string | null>(null);
 
   const focus = useMemo<Focus>(
     () => ({ centroid: new THREE.Vector3(), radius: APOAPSIS, depth: 0 }),
@@ -128,31 +147,51 @@ export function CameraRig() {
       computeFocus(path, focus);
       settling.current = true;
     }
+    const field = readField();
+
+    // §14 — individual focus: a selection at full drill depth whose lead is
+    // still inside the drilled cluster. A lead whose score carried it out of
+    // the cluster mid-focus fails the membership test, and the rig falls back
+    // to the cluster framing instead of chasing a dimmed stranger (contract §K).
+    const appState = useApsis.getState();
+    let focusIdx = -1;
+    let focusId: string | null = null;
+    if (appState.selectedLeadId && focus.depth >= DRILL_SEQUENCE.length && field) {
+      const lead = appState.leads.get(appState.selectedLeadId);
+      if (lead && matchesPath(lead, path)) {
+        const idx = readIndexOf().get(lead.id);
+        if (idx !== undefined) {
+          focusId = lead.id;
+          focusIdx = idx;
+        }
+      }
+    }
+    // Entering, leaving or switching focus is a framing change: animate it.
+    if (focusId !== lastFocusId.current) {
+      lastFocusId.current = focusId;
+      settling.current = true;
+    }
+
     // Fully home and settled: the rig is inert and the user owns the camera.
     if (!settling.current && focus.depth === 0) return;
-
-    const field = readField();
 
     // Target: the cluster centroid, pushed through the field's live rotation.
     s.desiredT.copy(focus.centroid);
     if (field) s.desiredT.applyQuaternion(field.quaternion);
 
-    // §23 "Select: camera subtly shifts toward lead" — at full drill depth a
-    // selection pulls the framing partway onto that lead's LIVE position,
-    // completing Universe → cluster → individual.
-    const selectedId = useApsis.getState().selectedLeadId;
-    if (selectedId && focus.depth >= DRILL_SEQUENCE.length && field) {
-      const idx = readIndexOf().get(selectedId);
-      if (idx !== undefined) {
-        s.lead
-          .set(
-            field.positions[idx * 3],
-            field.positions[idx * 3 + 1],
-            field.positions[idx * 3 + 2],
-          )
-          .applyQuaternion(field.quaternion);
-        s.desiredT.lerp(s.lead, 0.45);
-      }
+    // At individual focus the target ARRIVES on the lead's live rendered
+    // position — the journey's last step completes instead of leaning 45% and
+    // stopping. The buffer is field-local and the field spins, hence the
+    // quaternion (contract §C.1–3).
+    if (focusIdx >= 0 && field) {
+      s.lead
+        .set(
+          field.positions[focusIdx * 3],
+          field.positions[focusIdx * 3 + 1],
+          field.positions[focusIdx * 3 + 2],
+        )
+        .applyQuaternion(field.quaternion);
+      s.desiredT.copy(s.lead);
     }
 
     // Position: preserve the user's azimuth; radius and polar come from the
@@ -166,6 +205,13 @@ export function CameraRig() {
       const fit = Math.min(MAX_DIST, Math.max(MIN_DIST, focus.radius * 2.35));
       s.sph.radius = Math.max(MIN_DIST, fit * Math.pow(0.82, focus.depth - 1));
       s.sph.phi = Math.max(0.34, HOME_PHI - 0.17 * focus.depth);
+      // §14: commit. The dolly tightens to the individual distance and the
+      // gaze lifts a touch — arriving to meet the lead against the field,
+      // rather than looking down onto it. Azimuth stays the user's.
+      if (focusIdx >= 0) {
+        s.sph.radius = INDIVIDUAL_DIST;
+        s.sph.phi = Math.min(Math.PI * 0.72, s.sph.phi + INDIVIDUAL_PHI_LIFT);
+      }
     }
     s.desiredP.setFromSpherical(s.sph).add(s.desiredT);
 
