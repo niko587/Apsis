@@ -62,7 +62,31 @@ resolves the lead, a tracking glass card confirms it in-scene; rail untouched,
 Escape order unchanged, +1 draw call, reduced-motion and a11y contracts held.
 Owner M1 verification pending (see VALIDATION note in the commit).
 
-## 1. LLM command parsing (opt-in)
+## 1. Progressive lead reveal through drill depth — NEXT MILESTONE
+**MODEL: OPUS.** Contract written and committed:
+**`docs/CONTRACT_PROGRESSIVE_REVEAL.md`** (root cause, per-depth behaviour,
+state model, sync, search, a11y, responsive, performance, file boundaries, ten
+acceptance tests, and the implementation prompt in §P).
+
+**The defect:** after drilling to a segment, the rail's Leads list still shows
+the global top-150 *by score* and may contain none of the cluster's members, so
+a known lead can only be found by clicking particles. Three causes, all
+measured: `LeadList` never reads the drill path (zero references); the 150 cap
+is 3% of the book; and `src/universe/` never reads `hoveredLeadId`, so hover is
+one-directional.
+
+**Why it is mostly a filtering change:** measured on the default book, a
+full-depth cluster has **median 5 members, p90 19, max 81** across all 570
+clusters — the existing cap can never truncate one. Making the roster
+drill-aware delivers "every lead selectable by name at full depth" almost
+by itself.
+
+**Model note:** Opus, not Fable — this is data flow and information
+architecture. The one visual element (a hover ring) copies the existing
+selection-marker pattern. Fable afterwards only if the hover/selection/focus
+triad wants a deliberate visual hierarchy once all three are visible together.
+
+## 2. LLM command parsing (opt-in)
 **What:** `parseCommand` alternative returning the same `LeadQuery` via a
 model call, gated on a configured key; grammar remains the fallback; ignored-
 words honesty must survive (model must report unmapped clauses).
@@ -70,7 +94,7 @@ words honesty must survive (model must report unmapped clauses).
 phrasings parse; funnel/execution untouched.
 **Model:** Opus.
 
-## 2. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
+## 3. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
 **What:** precompute stage colours as RGB triples so no colour string is parsed
 in a hot path, and add an out-parameter `positionInto(lead, out)` so the frame
 path allocates nothing.
