@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { DIAG, readSample, type Sample } from './diagnostics';
+import { requestedSourceKind } from '../state/sources';
 
 export function DiagOverlay() {
   const [s, setS] = useState<Sample | null>(null);
@@ -67,6 +68,7 @@ export function DiagOverlay() {
         {s.drawCalls} draws · {s.points.toLocaleString()} pts · {s.triangles.toLocaleString()} tris
       </div>
       <div style={{ color: '#7d87a8' }}>dpr {window.devicePixelRatio}{off.length ? ` · off: ${off.join(' ')}` : ''}</div>
+      <div style={{ color: '#7d87a8' }}>source · {requestedSourceKind()}</div>
       <div style={{ marginTop: 5, color: '#2fe08a', whiteSpace: 'normal', maxWidth: 232 }}>{verdict}</div>
     </div>
   );

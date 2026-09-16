@@ -18,7 +18,18 @@ import { rng } from '../domain/seed';
 import { agentFor, isAgentDriven, taskDuration } from '../domain/agents';
 import { useApsis } from './store';
 
+/**
+ * The source contract — the seam a real CRM, dialer or webhook feed plugs into.
+ *
+ * Deliberately tiny. A source is anything that can be switched on, switched off,
+ * and identified; what it *does* while running is produce `LeadEvent`s and hand
+ * them to `ingest`. Nothing above this line knows which implementation is
+ * running, and no implementation may reach past `ingest` to change state.
+ *
+ * `name` exists for diagnostics only — never branch on it.
+ */
 export interface LeadSource {
+  readonly name: string;
   start(): void;
   stop(): void;
 }
@@ -163,6 +174,7 @@ export function createSimulatedSource(opts: SimulatedSourceOptions = {}): LeadSo
   };
 
   return {
+    name: 'simulator',
     start() {
       if (timer !== null) return;
       const interval = Math.max(16, 1000 / eventsPerSecond);

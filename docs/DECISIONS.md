@@ -159,3 +159,23 @@ tests red, reporting `reachable=false receivesPointer=false hitAt centre=null`
 with `top=1364 bottom=1392` against a 1000px viewport. Restored afterwards and
 confirmed byte-identical to origin/main.
 Forbids: asserting pixel-perfect containment as a proxy for reachability.
+
+## D22 — Two sources, one seam; `ingest` stays the only door (2026-09-16)
+Arc A. `LeadSource { name, start, stop }` is now explicit, and `ReplaySource`
+joins the simulator behind it. A source produces `LeadEvent`s and hands them to
+`ingest`; it may not touch the store, and it knows nothing of zustand, React or
+Three.js. Selection lives in `src/state/sources.ts` (`?source=replay`), and a
+typo falls back to the simulator rather than leaving the app with no feed.
+Recording observes the store's feed instead of wrapping `ingest`, so it captures
+events from every route (inbound, and agent tasks resolving through
+`completeTask`) without adding a second thing that can mutate state.
+The format is versioned, offsets are relative (so a session replays at any time
+and speed) while `event.at` stays absolute because appointments are scheduled
+from it, and `parseSession` **throws rather than dropping malformed entries** —
+a replay that silently skipped events would produce a plausible run that does
+not match the recording, which is worse than a loud failure.
+Recorded explicitly as a limitation rather than discovered later: replay does
+not recreate in-flight `AgentTask` arcs, because tasks are transport-side
+simulation, not domain events. Attribution survives via each event's `agentId`.
+Forbids: any incoming-event path that reaches state without going through
+`ingest`.

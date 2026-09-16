@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Universe } from './universe/Universe';
 import { useApsis } from './state/store';
-import { createSimulatedSource } from './state/source';
+import { createConfiguredSource } from './state/sources';
 import { STAGES, STAGE_ORDER, bandLabel } from './domain/types';
 import { LeadDetail } from './ui/LeadDetail';
 import { AgentRoster } from './ui/AgentRoster';
@@ -111,7 +111,9 @@ export default function App() {
     // for the per-event full-book revision walk, so removing it separates that
     // cost from steady-state rendering. Defaults to on.
     if (!live || !DIAG.feed) return;
-    const source = createSimulatedSource({ eventsPerSecond: 9 });
+    // `?source=replay` swaps the transport; everything downstream — scoring,
+    // gravity, agents, the rail, the Universe — is unaware which one is running.
+    const source = createConfiguredSource();
     source.start();
     return () => source.stop();
   }, [live]);

@@ -654,6 +654,9 @@ function renderJankReport(r: ReturnType<typeof jankReport>, mode: string): void 
       `window=${window.innerWidth}x${window.innerHeight}`,
   );
   lines.push(`ua=${navigator.userAgent}`);
+  lines.push(
+    `source=${new URLSearchParams(window.location.search).get('source') === 'replay' ? 'replay' : 'simulator'}`,
+  );
   const c = readCapabilities(probedRenderer ?? undefined);
   lines.push(`BUILD MODE = ${c.buildMode.toUpperCase()}   (no longer inferred from the port)`);
   lines.push(

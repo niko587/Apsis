@@ -35,34 +35,29 @@ was sound (last panel fully inside the rail at max scroll at all three
 viewports, 14px to spare) — **no product or layout change was made**. Still
 catches D12: reverting `.rail` to `overflow: hidden` turns 6 of 8 red. See D21.
 
-## 1. Prove the transport seam with a second source (replay) — NEXT MILESTONE
-**What:** implement a replay source that records a session's `LeadEvent`s and
-plays them back, alongside the simulator, selectable by URL param.
-**Why this is the highest-value product work now that performance is closed:**
-`PROJECT_MASTER_PLAN.md` names Arc A, the real data boundary, as **"the single
-largest gap"** — everything above `src/state/source.ts` is real and test-covered,
-and nothing below it exists. Arc A step 4 is exactly this: a second concrete
-source to prove the seam actually swaps. It is the prerequisite for any real CRM
-integration, it makes sessions deterministically reproducible (which would have
-saved several rounds of the performance investigation), and it builds the
-event-log serialization that persistence needs anyway, shrinking item 2.
-**Acceptance:** `?source=replay` reproduces a recorded session deterministically;
-the simulator is unchanged; the contract is documented in `ARCHITECTURE.md`;
-`ingest` remains the only mutator (D1).
-**Model:** Opus.
+## 0b. (closed) Arc A — transport seam proven with a second source
+`ReplaySource` ships alongside the simulator behind an explicit `LeadSource`
+contract; `?source=replay` plays a deterministic fixture through the same
+`ingest`. 22 tests added (88 → 110) covering format validation, ordering,
+timing, clean stop, determinism and a record → serialize → replay round trip.
+Browser-verified: the booked centre advanced through the real pipeline with no
+console errors. See `ARCHITECTURE.md` → "The source contract".
 
-## 2. Persistence v1
+## 1. Persistence v1 — NEXT MILESTONE
 **What:** Snapshot/rehydrate so reload does not reseed: persist the event log
 (or book + log tail) to localStorage/IndexedDB behind a small interface in
 `src/state/`, restoring through `ingest` so the one-mutator law holds.
-**Why it moved down:** with only the simulator feeding events, this durably
-stores *fabricated* data — real value arrives with a real source. Item 2 also
-builds most of its foundation.
+**Why it is now next:** Arc A closed, and it built most of this item's
+foundation. The versioned replay format, the validating parser and
+`createSessionRecorder` already serialize the canonical event stream and
+restore it through `ingest` — persistence is largely "write that same log to
+IndexedDB and rehydrate on boot", plus a reset control. The one-mutator law
+(D1) stays intact because rehydration replays events rather than setting state.
 **Acceptance:** reload preserves scores/stages/appointments; a "reset book"
 control exists; tests cover snapshot round-trip; D1 untouched.
 **Model:** Opus.
 
-## 3. Remaining §15 drill dimensions
+## 2. Remaining §15 drill dimensions
 **What:** Add `campaign` and `source` fields to the domain + seed (weighted,
 deterministic), then registry entries for campaign / source / agent /
 timeframe; UI needs nothing new (registry-driven).
@@ -71,7 +66,7 @@ sum to members — existing test pattern); parser optionally learns
 `from <campaign>` later.
 **Model:** Opus (domain), no visual work needed.
 
-## 4. §14 spatial individual transition
+## 3. §14 spatial individual transition
 **What:** At full drill depth + selection, resolve the lead in-field (camera
 completes the approach; a compact in-scene card or emphasized node), demoting
 the rail panel to secondary.
@@ -80,7 +75,7 @@ camera journey; reduced-motion path preserved; a11y parity (selection still
 announced, panel still exists).
 **Model:** Fable, with the CameraRig contract from `ARCHITECTURE.md`.
 
-## 5. LLM command parsing (opt-in)
+## 4. LLM command parsing (opt-in)
 **What:** `parseCommand` alternative returning the same `LeadQuery` via a
 model call, gated on a configured key; grammar remains the fallback; ignored-
 words honesty must survive (model must report unmapped clauses).
@@ -88,7 +83,7 @@ words honesty must survive (model must report unmapped clauses).
 phrasings parse; funnel/execution untouched.
 **Model:** Opus.
 
-## 6. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
+## 5. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
 **What:** precompute stage colours as RGB triples so no colour string is parsed
 in a hot path, and add an out-parameter `positionInto(lead, out)` so the frame
 path allocates nothing.

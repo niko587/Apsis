@@ -49,6 +49,94 @@ gives the 3D layer its own authoritative state is wrong by construction.
 (Per-directory LOC: domain 2,041 · state 615 · orchestrator 802 · ui 1,166 ·
 universe 2,646.)
 
+## The source contract (Arc A)
+
+**`ingest(event)` is the only way an incoming event changes state.** Everything
+below is about how events are *produced*; nothing below may reach past that
+boundary.
+
+```
+SOURCE ──emits LeadEvent──▶ ingest ──▶ scoring ──▶ store ──▶ gravity ──▶ Universe
+  │                                                      └──▶ rail panels
+  ├── SimulatorSource   fabricates a plausible stage-aware stream (~9/s)
+  └── ReplaySource      re-emits a recorded session at recorded timing
+```
+
+```ts
+interface LeadSource {
+  readonly name: string;   // diagnostics only — never branch on it
+  start(): void;
+  stop(): void;
+}
+```
+
+Deliberately tiny. A source is anything that can be switched on, switched off
+and identified; what it does while running is produce `LeadEvent`s. Nothing
+above the seam knows which implementation is running — `src/state/sources.ts`
+picks one from `?source=`, defaulting to the simulator.
+
+| | transport-specific | domain |
+|---|---|---|
+| when an event happens | ✓ source | |
+| which lead, which kind, which agent | | ✓ `LeadEvent` |
+| what an event is *worth* | | ✓ `scoring.applyEvent` |
+| where a lead sits | | ✓ `gravity.positionFor` |
+| task lifecycle, retries, backpressure | ✓ source | |
+
+### SimulatorSource (`src/state/source.ts`)
+
+Fabricates stage-aware events at ~9/s. It does two things beyond emitting:
+opens `AgentTask`s (which is what draws in-flight agent arcs, resolving into an
+event through `completeTask` → `ingest`) and drives `applyDecay` on a slow
+timer. **Both are transport-side simulation, not domain truth** — which is
+precisely why a second source is not required to reproduce them.
+
+### ReplaySource (`src/state/replay.ts`)
+
+Emits a recorded session through the same `ingest`, preserving order and
+relative timing, with an injectable scheduler so timing is testable without
+sleeping. Knows nothing of zustand, React or Three.js. A single-timer chain, so
+`stop()` has exactly one thing to cancel and emission after stop is impossible.
+
+**What replay does not reproduce, stated plainly:** the transient agent arcs
+that were in flight while recording, because tasks are not domain events. Each
+replayed event still carries its original `agentId`, so attribution survives;
+only the in-flight animation does not. Decay is a pure function of elapsed time
+with a 72h grace period, so it is a no-op across any recordable session.
+
+### Recording format (version 1)
+
+```jsonc
+{
+  "version": 1,
+  "name": "built-in demo",
+  "recordedAt": 1700000000000,   // or null for an authored fixture
+  "events": [
+    { "offsetMs": 0, "event": { "id": "…", "leadId": "lead_0000",
+                                "kind": "contacted", "at": 1700000000000,
+                                "agentId": "agent_sms" } }
+  ]
+}
+```
+
+`offsetMs` is relative to the start of the recording, so a session replays at
+any wall-clock time and any speed without rewriting the events; `event.at` stays
+absolute because it is domain data that appointments are scheduled from.
+`parseSession` validates untrusted data and **throws rather than dropping bad
+entries** — a replay that silently skipped events would produce a plausible run
+that does not match what was recorded, which is worse than a loud failure.
+
+`createSessionRecorder` captures the canonical stream by observing the store's
+feed rather than wrapping `ingest`, so it sees every event regardless of the
+route it took and adds nothing that can mutate state.
+
+### Plugging in a real CRM / dialer / webhook
+
+Implement `LeadSource`, translate the wire payload into `LeadEvent`, call
+`ingest`. That is the whole contract. Namespaced CRM event names
+(`sms.replied`) need a translation layer at this boundary — see the §18
+divergence below — and nothing above the seam changes.
+
 ## Event architecture
 
 `LeadEventKind` is a **flat union** (replied, opened, contacted,

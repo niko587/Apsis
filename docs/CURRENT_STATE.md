@@ -96,6 +96,45 @@ centre, a11y and responsive behaviour are all untouched.
    `typecheck`, `test:e2e`, `check`. README advertised `npm test` before it
    existed.
 
+## Arc A milestone: the source seam is proven (2026-09-16)
+
+**Apsis now has two concrete sources behind one contract**, which turns the
+transport seam from a claim into a fact. `?source=replay` plays a deterministic
+recorded session through the *same* `ingest` the simulator uses; everything
+above the seam — scoring, gravity, state, agents, the rail, the Universe —
+is unaware which one is running.
+
+- **Contract made explicit** (`LeadSource { name, start, stop }`), simulator
+  conformed to it, selection centralised in `src/state/sources.ts`.
+- **`ReplaySource`** (`src/state/replay.ts`) — versioned format, validating
+  parser that throws rather than dropping bad events, injectable scheduler so
+  timing is testable without sleeping, single-timer chain so nothing can emit
+  after `stop()`.
+- **`createSessionRecorder`** captures the canonical stream by *observing* the
+  store feed rather than wrapping `ingest` — it sees events from every route
+  and adds nothing that can mutate state.
+- **Built-in fixture** (`src/state/fixtures/demoSession.ts`): 14 real events,
+  three parallel narratives — one lead all the way to booked, one going cold,
+  one engaging without committing. Only genuine `LeadEventKind`s and real agent
+  ids.
+- **22 new tests** (88 → 110): format validation, order, relative timing, speed,
+  no-emit-after-stop, truncation-is-a-prefix, twice-identical delivery,
+  identical canonical state from the same seeded book, and a full
+  record → serialize → parse → replay round trip.
+
+Verified in a browser, no console errors: `/?source=replay` drove the booked
+centre from 16 → **17**, meaning a lead reached periapsis through the real
+pipeline — and only `appointment_booked` can cross `TOUCH_CEILING` (D3).
+
+**`ingest` remains the only incoming-event mutation boundary.** Replay touches
+no store field directly.
+
+**Known limitation, by design:** replay does not reproduce the transient agent
+*arcs* that were in flight during recording, because `AgentTask`s are
+transport-side simulation rather than domain events. Replayed events still
+carry their original `agentId`, so attribution survives; only the in-flight
+animation does not. Decay is a no-op over any recordable session (72h grace).
+
 ## In flight right now
 
 Nothing mid-edit. The working tree is consistent and all checks are green.
