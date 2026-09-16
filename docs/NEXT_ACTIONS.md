@@ -1,6 +1,6 @@
 # Next Actions
 
-_Last updated: 2026-09-15 (performance closeout). Ordered. Each item:
+_Last updated: 2026-09-16 (LLM command parsing contract). Ordered. Each item:
 what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
@@ -24,8 +24,10 @@ bloom) is the accepted shipping baseline — see `PERFORMANCE_BASELINE.md`
 closeout. Performance is **no longer the top blocker**, and no further rendering
 optimisation is warranted or wanted.
 
-The top priority is now the product's own documented largest gap: the real data
-boundary (`PROJECT_MASTER_PLAN.md` Arc A).
+Arc A, Persistence v1, §15 drill dimensions, §14 spatial individual focus and
+progressive lead reveal are all closed — the last two **owner accepted**. The
+current milestone is **LLM command parsing (opt-in)**, contract at
+`docs/CONTRACT_LLM_COMMAND_PARSING.md`, not yet implemented.
 
 ## 0. (closed) Reachability suite over-strictness — FIXED, CI trust restored
 The assertion required an element's whole bounding box inside the viewport,
@@ -56,43 +58,68 @@ are untouched. New `Lead` fields hash the id rather than consuming the seed
 stream, so persistence needed no migration (D24). 23 tests added (133 → 156).
 Not in the default drill path — a dimension picker is UI work for later.
 
-## 0e. (closed) §14 spatial individual transition — implemented by Fable
+## 0e. (closed) §14 spatial individual transition — **OWNER ACCEPTED**
 Camera completes the approach (was a 45% lean), a stage-coloured reticle
 resolves the lead, a tracking glass card confirms it in-scene; rail untouched,
 Escape order unchanged, +1 draw call, reduced-motion and a11y contracts held.
-Owner M1 verification pending (see VALIDATION note in the commit).
+Implemented by Fable; **accepted by the owner on the real 2020 M1 MacBook Air.**
 
-## 1. Progressive lead reveal through drill depth — NEXT MILESTONE
+## 0f. (closed) Progressive lead reveal through drill depth — **OWNER ACCEPTED**
+`LeadList` now reads the drill path and filters through `matchesPath` before the
+cap, composing with command results and then search; the header states what it
+is showing ("N in cluster" / "showing X of Y" / "N of M match" /
+"· command filtered") rather than implying completeness. Hover is bidirectional
+(one extra draw call, `FrontSide` billboard). Verified on the full 4,892-lead
+book: Colorado 98 → Colorado Springs 24 → Supplemental 4, with the target lead
+listed first. Contract: `docs/CONTRACT_PROGRESSIVE_REVEAL.md`.
+
+**The lesson it added (again):** nine specs passed while the roster sat 145–345px
+below the rail's fold, and a later revision left rows whose click point was off
+screen — a synthetic `.click()` still "worked". The suite now asserts the row's
+click point is on screen, hit-tests to the row, and that a real click selects.
+Same family as D12: **visible must mean operable.**
+
+## 1. LLM command parsing (opt-in) — **CURRENT MILESTONE**
 **MODEL: OPUS.** Contract written and committed:
-**`docs/CONTRACT_PROGRESSIVE_REVEAL.md`** (root cause, per-depth behaviour,
-state model, sync, search, a11y, responsive, performance, file boundaries, ten
-acceptance tests, and the implementation prompt in §P).
+**`docs/CONTRACT_LLM_COMMAND_PARSING.md`** — current pipeline, the canonical
+`LeadQuery`, the single seam, activation, no-key behaviour, provider boundary,
+validation, unmapped-clause honesty, fallback table, async/cancellation, UI
+states, security and privacy, file boundaries, 15 unit + 7 browser tests,
+acceptance criteria, implementation sequence, and the next prompt in §T.
 
-**The defect:** after drilling to a segment, the rail's Leads list still shows
-the global top-150 *by score* and may contain none of the cluster's members, so
-a known lead can only be found by clicking particles. Three causes, all
-measured: `LeadList` never reads the drill path (zero references); the 150 cap
-is 3% of the book; and `src/universe/` never reads `hoveredLeadId`, so hover is
-one-directional.
+**What:** an alternative front end to `parseCommand` that returns the same
+`ParsedCommand` via a model call, opt-in on a host-declared endpoint; the
+grammar remains the fallback and the oracle.
 
-**Why it is mostly a filtering change:** measured on the default book, a
-full-depth cluster has **median 5 members, p90 19, max 81** across all 570
-clusters — the existing cap can never truncate one. Making the roster
-drill-aware delivers "every lead selectable by name at full depth" almost
-by itself.
+**The two findings that shape it:**
+1. **Apsis is a browser-only SPA with no server and no `fetch()` in `src/`.** Any
+   API key reachable by this app is public — `VITE_*` is inlined at build time.
+   So Apsis must never hold a vendor credential or call a vendor API directly;
+   it POSTs to an endpoint the host operates. Only the command text and a static
+   schema leave the browser — never leads, names, phones, emails or history.
+2. **The grammar's honesty is structural, not promised:** it blanks out every
+   recognised span, so the residue *is* the unrecognised part. The LLM path must
+   earn it the same way — each mapped filter must cite a span that appears
+   verbatim in the input, and `unrecognised` is computed by subtraction. The
+   model's own account of what it understood is not trusted.
 
-**Model note:** Opus, not Fable — this is data flow and information
-architecture. The one visual element (a hover ring) copies the existing
-selection-marker pattern. Fable afterwards only if the hover/selection/focus
-triad wants a deliberate visual hierarchy once all three are visible together.
+**Acceptance headline:** with no declared interpreter, behaviour is *identical* —
+proven by a corpus deep-equal test against `parseCommand` and an assertion that
+`fetch` is never called, not by inspection.
 
-## 2. LLM command parsing (opt-in)
-**What:** `parseCommand` alternative returning the same `LeadQuery` via a
-model call, gated on a configured key; grammar remains the fallback; ignored-
-words honesty must survive (model must report unmapped clauses).
-**Acceptance:** with no key, behaviour identical to today; with key, novel
-phrasings parse; funnel/execution untouched.
-**Model:** Opus.
+## 2. (open defect) Four browser specs red on `main`
+Found at b96108d, **after** progressive reveal landed and unrelated to the
+contract above. Not yet triaged:
+- `e2e/persistence.spec.ts:34`
+- `e2e/reachability.spec.ts:275`
+- `e2e/spatial-focus.spec.ts:82` (@2560×1440)
+- `e2e/spatial-focus.spec.ts:128`
+
+At least one is a stale test assumption rather than a product defect:
+`getByRole('option').nth(1)` at `?leads=400` full depth, where the drill-aware
+roster now yields a single row. The other three are undiagnosed — **do not
+assume they are all stale.** TypeScript, lint and all 165 unit tests are green;
+26 of 30 browser specs pass. Triage before or alongside the LLM milestone.
 
 ## 3. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
 **What:** precompute stage colours as RGB triples so no colour string is parsed

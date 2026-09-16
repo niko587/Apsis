@@ -1,7 +1,7 @@
 {
   "name": "apsis",
   "identity": "AI Sales Operating System — Lead Universe. NOT the Cortex project.",
-  "updated": "2026-09-15",
+  "updated": "2026-09-16",
   "repo_url": "https://github.com/niko587/Apsis",
   "spec": "~/Downloads/APSIS_Master_Build_Package/APSIS_MASTER_BUILD_PROMPT.md",
   "stack": {
@@ -29,7 +29,7 @@
   "checks": {
     "typescript": "clean (app + node + e2e projects)",
     "tests": "165/165 passing (12 files)",
-    "e2e": "20/20 passing — 8 reachability (D21, wheel-stall race fixed) + 3 persistence + 9 spatial-focus (§14)",
+    "e2e": "26/30 passing — 4 RED and untriaged at b96108d: persistence.spec.ts:34, reachability.spec.ts:275, spatial-focus.spec.ts:82 (@2560x1440), spatial-focus.spec.ts:128. At least one is a stale test assumption (option.nth(1) at ?leads=400, where the drill-aware roster now yields one row); the other three are undiagnosed. Do not assume all four are stale. See NEXT_ACTIONS §2.",
     "lint": "exit 0 (R3F idiom warnings in LeadField.tsx only)",
     "build": "green (~1.27MB, 350KB gz)",
     "runtime_console_errors": 0,
@@ -54,13 +54,14 @@
     { "key": "intelligence-core", "spec": "§8", "status": "real (state-vocabulary partial)", "files": ["src/universe/Core.tsx"] },
     { "key": "agents-tasks-claims-arcs", "spec": "§11", "status": "real", "files": ["src/domain/agents.ts", "src/universe/AgentNetwork.tsx"] },
     { "key": "active-skills", "spec": "§12", "status": "real", "files": ["src/universe/skills.ts", "src/universe/UniverseOverlay.tsx"] },
-    { "key": "command-interface", "spec": "§13", "status": "real (grammar, not LLM, by design)", "files": ["src/domain/query.ts", "src/ui/CommandBar.tsx"] },
+    { "key": "command-interface", "spec": "§13", "status": "real (deterministic grammar). Opt-in LLM parsing is the CURRENT MILESTONE — contract written and binding, NOT implemented: docs/CONTRACT_LLM_COMMAND_PARSING.md. No model call, no fetch, no key exists in src/ today", "files": ["src/domain/query.ts", "src/ui/CommandBar.tsx", "docs/CONTRACT_LLM_COMMAND_PARSING.md"] },
     { "key": "lead-detail", "spec": "§14", "status": "real — spatial resolve complete: camera arrives on the live lead, stage-coloured reticle, tracking in-scene card; rail unchanged as the detail surface", "files": ["src/ui/LeadDetail.tsx", "src/universe/SelectedLeadFocus.tsx"] },
     { "key": "cluster-drill", "spec": "§15", "status": "real — 8 registry dimensions (region/state/city/segment/campaign/source/agent/timeframe + temperature); DRILL_SEQUENCE unchanged so the new four are registry-complete but not in the default drill path (no dimension picker UI yet)", "files": ["src/universe/clusters.ts", "src/state/drillStore.ts", "src/universe/CameraRig.tsx", "src/universe/dimensions.test.ts"] },
     { "key": "appointment-centre", "spec": "§16", "status": "real", "files": ["src/domain/appointments.ts", "src/ui/AppointmentCentre.tsx"] },
     { "key": "telemetry", "spec": "§17", "status": "real", "files": ["src/state/store.ts", "src/ui/SystemState.tsx"] },
     { "key": "event-architecture", "spec": "§18", "status": "partial-divergent (flat union, not namespaced)", "files": ["src/domain/types.ts"] },
     { "key": "performance-60fps", "spec": "§20", "status": "unverified-on-real-gpu (CI runners are GPU-less; FPS must never be asserted there)", "files": [] },
+    { "key": "progressive-lead-reveal", "spec": "-", "status": "real — OWNER ACCEPTED. The roster reads the drill path and filters through matchesPath before the cap, composes with command results, then search; the header states what it is showing rather than implying completeness. Hover is bidirectional at +1 draw call", "files": ["src/ui/LeadList.tsx", "src/universe/LeadField.tsx", "e2e/progressive-reveal.spec.ts", "docs/CONTRACT_PROGRESSIVE_REVEAL.md"] },
     { "key": "accessibility", "spec": "§21", "status": "real", "files": ["src/ui/LeadList.tsx", "src/ui/StatusAnnouncer.tsx"] },
     { "key": "responsive", "spec": "§22", "status": "real (420-2560px verified)", "files": ["src/App.css"] },
     { "key": "design-tokens", "spec": "§24", "status": "partial (conventions, not a token system)", "files": ["src/App.css"] },
@@ -88,7 +89,9 @@
     "every incoming LeadEvent reaches state through ingest(); a source may never touch the store directly (D22)",
     "persistence restores by replaying the event log through ingest, never by writing store fields; corrupt history is discarded, never partially applied (D23)",
     "a new seeded lead field hashes the lead id; it never consumes the rng(seed) stream, which would shift the whole book and silently repoint every persisted log (D24)",
-    "every drill dimension partitions its parent exactly: one child per lead, counts summing to the parent, nothing dropped (D24)"
+    "every drill dimension partitions its parent exactly: one child per lead, counts summing to the parent, nothing dropped (D24)",
+    "Apsis is a browser-only SPA with no server, so any API key reachable by it is public: it must never hold a vendor credential or call a vendor API directly. Model access goes through a host-declared endpoint, and only the user's command text plus a static schema ever leaves the browser — never leads, names, phones, emails, health information or history (CONTRACT_LLM_COMMAND_PARSING §L)",
+    "an LLM may never be trusted to report what it failed to understand: every mapped filter must cite a span present verbatim in the input, and unrecognised text is computed by subtracting verified spans — the same way parseCommand earns it (CONTRACT_LLM_COMMAND_PARSING §H)"
   ],
   "blocked": [],
   "performance": {
