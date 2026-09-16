@@ -248,7 +248,45 @@ Shipping stylesheets and visuals are byte-identical; the toggles inject a
 runtime `<style>` because the CSS minifier rewrote an authored override to
 `-webkit-` only, which would have silently disabled the test in Chrome.
 
-Next action: the Safari `?backdrop=off` A/B — `NEXT_ACTIONS.md` item 1.
+**Round 7 (first round to change shipping code).** The M1 matrix showed no
+configuration in distress — baseline mean 17.2 / p95 20 (~59 fps), p99 spanning
+only 23–27 ms across all ten cases, and two cases that *removed* work measuring
+worse (`backdrop=off` p99 58; `dpr=1 fx=off backdrop=off` max 406). That is
+sparse noise, not a ranking. What survived: `fx=off backdrop=off` was cleanest
+(p99 23, max 32, zero frames >33 ms) while keeping all 4,892 leads, the Core and
+DPR 2; `core=off` and `field=off` did not beat `fx=off`; `dpr=1` produced no
+dramatic change despite ~4× fewer fragments; and round 5's subjective A/B stands.
+
+Two implementation changes, no visual redesign:
+1. **All four `backdrop-filter` blurs removed from shipping CSS** (the built
+   bundle now contains zero live backdrop sampling). The glass look is rebuilt
+   from gradients, an inset rim highlight and a drop shadow. Alpha is
+   *higher* than the original on purpose — a blur hides what is behind it, and
+   at the original alpha stars and ring arcs read crisply through the panel,
+   which looked cheaper; the final values match the blurred original's
+   *perceived* density.
+2. **Bloom renders at half resolution** (`resolutionScale={0.5}`) — a quarter
+   of the fragments, upsampled through the existing mip chain. The scene still
+   renders at full DPR 2; `levels`, `intensity`, `radius` and both luminance
+   parameters are unchanged.
+
+Verified by pixel diff at DPR 2 with the feed and ambient motion frozen: full
+page **mean difference 0.42/255 (0.16%)**, 0.68% of pixels differing by >8.
+**`?legacyfx=1` reproduces the previous appearance pixel-for-pixel (mean 0, max
+0)** — an exact A/B control.
+
+**No performance improvement is claimed.** This machine measured the optimised
+path *slower* (330 vs 275 ms mean) on a 32–38 frame sample under a software
+rasterizer and session-long load — far too noisy to resolve a bloom-resolution
+change in either direction. The owner's M1 remains the authority.
+
+`src/domain/**`, `src/state/**`, `src/orchestrator/**` and `src/ui/**` are
+unchanged; only the two stylesheets, one `Universe.tsx` prop and the
+diagnostics module were touched.
+
+Next action: the owner's A/B — `/` versus `/?legacyfx=1` in Safari, judging
+both smoothness **and** whether any visual difference is perceptible.
+See `NEXT_ACTIONS.md` item 1.
 
 ## Known issues and unverified claims
 

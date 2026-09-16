@@ -1033,3 +1033,159 @@ against baseline — not the mean.
 No bottleneck confirmed. No optimization chosen. One contributor established
 (backdrop-filter, partial), one hypothesis retired (Safari-specific), and a
 harness that can rank the rest on the owner's real hardware in two minutes.
+
+---
+
+# Round 7: optimising the compositing and post paths
+
+_2026-09-15. First round to change shipping code. Visual fidelity verified by
+pixel diff; `?legacyfx=1` restores the previous pipeline exactly._
+
+## A. What rounds 5–6 actually support — read this before the changes
+
+The M1 matrix does **not** show a struggling application in any configuration.
+Baseline was mean 17.2 / median 17 / p95 20 — roughly 59 fps. Across all ten
+cases p99 spanned only 23–27 ms, and the `>33ms` counts (0,1,2,4,7,9) come from
+~470-frame samples where a single stall moves the number. **Two cases that
+removed work measured worse** (`backdrop=off` p99 58, max 289;
+`dpr=1 fx=off backdrop=off` max 406). That is the signature of sparse system
+noise, not of a workload ranking.
+
+What survives as genuine signal:
+
+- **`fx=off` is the most consistently clean single axis** (p99 23, max 38,
+  `>50ms` 0) and the combination `fx=off backdrop=off` was the cleanest overall
+  (p99 23, max 32, **zero** frames over 33 ms) — while keeping all 4,892 leads,
+  the Core, and DPR 2.
+- **`core=off` and `field=off` do not beat `fx=off`**, so the raymarch and the
+  sprite overdraw are not the lever.
+- **`dpr=1` does not produce a dramatic steady-state change** despite ~4× fewer
+  fragments, which argues against raw fill rate being the constraint.
+- **Round 5's subjective A/B stands on its own**: removing the backdrop blurs
+  was directly perceived as smoother. Subjective evidence from the affected
+  human is not overturned by a noisy 8-second sample.
+
+So round 7 targets post-processing and DOM compositing — the two paths with
+both a measured signal and a subjective one — and treats everything else as
+unindicted.
+
+## B. Backdrop implementation changes
+
+All four `backdrop-filter: blur()` declarations are **gone from the shipping
+stylesheets**; the built CSS now contains zero live backdrop sampling.
+
+| element | before | after |
+|---|---|---|
+| `.command-row` | `rgba(10,12,26,0.86)` + `blur(14px)` | vertical gradient `rgba(16,18,38,0.97)→rgba(10,12,26,0.95)`, inset rim highlight, soft drop shadow |
+| `.command-out` | same + `blur(14px)` | gradient `0.96→0.94`, same treatment |
+| `.uv-clusters` / `.uv-skills` | `var(--panel)` (0.62) + `blur(6px)` | gradient `rgba(18,20,42,0.82)→rgba(12,14,30,0.72)`, inset rim, shadow |
+
+**The alpha is deliberately higher than the original.** A blur hides what is
+behind it; without one, the same alpha let stars and ring arcs read *crisply*
+through the panel, which looked cheaper rather than more transparent — the
+first attempt visibly leaked background detail and ghosted text through the
+command bar. The final values match the *perceived* density of the blurred
+original, not its literal alpha. The inset rim highlight and drop shadow
+reproduce the lift and refraction edge that made the panels read as glass.
+
+## C. Post-processing implementation changes
+
+One change: `<Bloom resolutionScale={0.5} />`.
+
+Bloom now renders its pyramid at half resolution — a quarter of the fragments —
+and is upsampled through the existing mip chain. **The scene still renders at
+full DPR 2**; only the bloom buffer is smaller. Because the effect's output is a
+blur, the detail discarded is detail bloom was about to destroy anyway, which is
+why `levels`, `intensity`, `radius`, `luminanceThreshold` and `luminanceSmoothing`
+are all unchanged. Tone mapping, the half-float target and `multisampling={0}`
+are untouched.
+
+Explicitly **not** done: bloom was not removed, levels were not cut, the Core
+shader was not simplified, no selective-bloom rewrite, no emissive substitute,
+no adaptive quality. Those are visual-identity changes; this is not.
+
+## D. Visual fidelity — measured, not asserted
+
+Captured at 1280×800, **DPR 2**, with `?feed=off&anim=off` freezing the event
+stream and ambient motion so two captures are comparable, then diffed per pixel:
+
+| capture | mean diff /255 | % pixels differing >8 | max |
+|---|---|---|---|
+| full page | **0.42 (0.16%)** | 0.68% | 67 |
+| command bar crop | 2.40 | 6.36% | 30 |
+| overlay crop | 1.11 | 1.77% | 21 |
+
+**`?legacyfx=1` reproduces the previous appearance pixel-for-pixel: mean diff 0,
+max diff 0, on all three captures.** That is an exact A/B control, and it also
+proves the 0.42 full-page delta is a real consequence of the optimisation rather
+than render nondeterminism.
+
+Intentional differences, in full:
+1. Panels are slightly denser and no longer blur what is behind them. Background
+   detail is hidden by opacity instead of by blurring.
+2. Panels gained a 1px inset top highlight and a soft drop shadow.
+3. Bloom is computed at half resolution — the largest contributor to the
+   command-crop delta, visible as marginally softer highlight fringes.
+
+## E. Performance on the measuring machine — INCONCLUSIVE
+
+Legacy mean 275.1 ms vs optimised 330.2 ms over a 10 s drag. **This shows no
+improvement and, taken at face value, the reverse.** It is not evidence either
+way: 32–38 frames at ~300 ms each, on a software rasterizer, on a machine that
+has been running heavy profiling all session. A bloom-resolution change cannot
+be resolved at that sample size in that environment.
+
+**No performance improvement is claimed. The owner's M1 is the authority.**
+
+## F. Compromises
+
+- **The panels are no longer frosted glass.** They are dense translucent glass.
+  On a busy background the original softened what was behind it; the replacement
+  hides it. This is the honest cost of removing live backdrop sampling, and it
+  is the one change a discerning eye could notice.
+- Bloom highlight fringes are marginally softer at half resolution.
+- Both are reversible in one flag, and neither touches colour, hierarchy, glow
+  intensity or the dark cinematic identity.
+
+## G. Product integrity
+
+`src/domain/**`, `src/state/**`, `src/orchestrator/**` and `src/ui/**` are
+unchanged. The 4,892-lead book, Lead Gravity, scoring, agents, trails, the
+Intelligence Core, temperature language, interaction, DPR 2 capability and
+responsive behaviour are all exactly as before. The only files touched are the
+two stylesheets, `Universe.tsx` (one prop) and the diagnostics module.
+
+## H. The owner's A/B
+
+```
+npm run build && npm run preview -- --port 4173
+```
+In **Safari**, drag the universe for ~20 s in each:
+```
+http://localhost:4173/                 # optimised (new shipping)
+http://localhost:4173/?legacyfx=1      # exactly what shipped before
+```
+Two questions, and the second matters as much as the first:
+1. **Does the optimised path feel smoother?**
+2. **Can you see any visual difference at all?** If the panels read as cheaper
+   or flatter, say so — the alpha is one line to retune and the A/B is exact.
+
+Then, for numbers: `http://localhost:4173/?matrix=1` again, to compare against
+the round-6 table on the same hardware.
+
+## Status
+
+Two implementation changes shipped, both reversible by one flag, both verified
+visually by pixel diff. **No performance claim is made** — the measuring machine
+cannot test it, and the round-6 data was too noisy to promise a specific gain.
+
+### A cheaper hypothesis still worth one minute
+
+Every round has measured healthy frame delivery while the owner reports lag.
+`OrbitControls` runs with `enableDamping` and `dampingFactor: 0.06`, which is a
+*slow* damping constant: the camera keeps gliding after input stops and responds
+softly to it. That is perceived as lag at any frame rate, and it is not a
+performance problem at all. It has never been tested, it costs nothing to try,
+and if the owner's complaint is specifically "the camera feels heavy / keeps
+moving after I let go" rather than "the picture stutters", it is a better
+explanation than anything measured so far.

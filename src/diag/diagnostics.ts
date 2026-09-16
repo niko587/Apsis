@@ -1346,3 +1346,43 @@ function renderMatrixReport(rows: MatrixRow[]): void {
   el.append(pre, ta);
   document.body.appendChild(el);
 }
+
+/* ------------------------------------------------ round 7: legacy FX A/B --- */
+
+/**
+ * `?legacyfx=1` restores the pre-round-7 visual pipeline so the owner can A/B
+ * the optimisation against exactly what shipped before:
+ *
+ *   - the four `backdrop-filter` blurs over the canvas, at their original radii
+ *     and background alphas
+ *   - full-resolution bloom (`resolutionScale` 1 rather than 0.5)
+ *
+ * Both paths are visually intended to be indistinguishable. The flag exists so
+ * that claim can be checked by a human rather than asserted by me, and so a
+ * regression can be demonstrated rather than argued about.
+ */
+export const LEGACY_FX =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('legacyfx') === '1';
+
+/**
+ * Re-apply the original backdrop blurs.
+ *
+ * Injected at runtime rather than authored into App.css because the CSS
+ * minifier rewrites `backdrop-filter` declarations — an authored
+ * prefixed/unprefixed pair came out of the build as `-webkit-` only during
+ * round 5, which would have made this toggle a no-op in Chrome.
+ */
+export function applyLegacyFx(): void {
+  if (!LEGACY_FX || typeof document === 'undefined') return;
+  const style = document.createElement('style');
+  style.setAttribute('data-legacy-fx', 'true');
+  style.textContent =
+    '.command-row,.command-out{' +
+    'background:rgba(10,12,26,.86)!important;box-shadow:none!important;' +
+    'backdrop-filter:blur(14px)!important;-webkit-backdrop-filter:blur(14px)!important}' +
+    '.uv-clusters,.uv-skills{' +
+    'background:var(--panel)!important;box-shadow:none!important;' +
+    'backdrop-filter:blur(6px)!important;-webkit-backdrop-filter:blur(6px)!important}';
+  document.head.appendChild(style);
+}

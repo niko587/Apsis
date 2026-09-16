@@ -314,11 +314,25 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(10, 12, 26, 0.86);
+  /* Glass without live backdrop sampling.
+     A `backdrop-filter` makes the compositor read back whatever is behind the
+     element, blur it and recomposite — every frame, with the live WebGL canvas
+     as the source, after requestAnimationFrame has returned. At 0.86 alpha the
+     blur was contributing very little visible softening for that cost, so the
+     translucency, the lift and the faint refraction highlight are rebuilt here
+     from a gradient and an inset rim instead.
+     The alpha is HIGHER than the original 0.86 on purpose: a blur hides what is
+     behind it, and without one the same alpha let stars and ring arcs read
+     crisply through the panel, which looked cheaper, not more transparent. This
+     matches the *perceived* density of the blurred original rather than its
+     literal alpha. `?legacyfx=1` restores the original for A/B. */
+  background: linear-gradient(180deg, rgba(16, 18, 38, 0.97), rgba(10, 12, 26, 0.95));
   border: 1px solid rgba(143, 107, 255, 0.34);
   border-radius: 11px;
   padding: 9px 11px;
-  backdrop-filter: blur(14px);
+  box-shadow:
+    inset 0 1px 0 rgba(176, 160, 255, 0.1),
+    0 10px 30px rgba(0, 0, 0, 0.45);
 }
 
 .command-mark {
@@ -356,11 +370,13 @@ html, body, #root {
 .command-clear { background: none; border-color: transparent; color: var(--muted); }
 
 .command-out {
-  background: rgba(10, 12, 26, 0.86);
+  background: linear-gradient(180deg, rgba(16, 18, 38, 0.96), rgba(10, 12, 26, 0.94));
   border: 1px solid var(--line);
   border-radius: 11px;
   padding: 10px 12px;
-  backdrop-filter: blur(14px);
+  box-shadow:
+    inset 0 1px 0 rgba(176, 160, 255, 0.08),
+    0 10px 28px rgba(0, 0, 0, 0.4);
   display: flex;
   flex-direction: column;
   gap: 9px;

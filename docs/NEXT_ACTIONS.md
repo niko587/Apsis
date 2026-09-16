@@ -22,33 +22,41 @@ The owner reports subjective grade **D** on a 2020 M1 MacBook Air. That is now
 the project's top priority. Round 1's hypothesis was refuted by real hardware;
 item 1 is the ~90-second run that ranks what is left.
 
-## 1. Run `?matrix=1` in Safari — BLOCKED on owner, ~2 minutes, one URL
-**What:**
+## 1. A/B the round-7 optimisation in Safari — BLOCKED on owner, ~1 minute
+**What:** `npm run build && npm run preview -- --port 4173`, then drag the
+universe for ~20s in each:
 ```
-npm run build && npm run preview -- --port 4173
-http://localhost:4173/?matrix=1      # in Safari; do not touch the mouse
+http://localhost:4173/                 # optimised (new shipping)
+http://localhost:4173/?legacyfx=1      # exactly what shipped before (pixel-identical)
 ```
-It drives its own scripted drag through ten cases and ends on a copyable
-report. Send the textarea contents back.
-**Why now:** round 5 established backdrop-filter as a **real but partial**
-contributor (removing it is noticeably better; significant lag remains), and
-the owner's careful re-comparison found **Safari ≈ Chrome**, which retires the
-WebKit-specific hypothesis. Several candidates remain — DPR/fill rate, additive
-overdraw, the Core raymarch, the post stack, GPU completion stalls — and none
-can be ranked by argument. The matrix isolates each with one axis changed at a
-time, and records **every frame** with what co-occurred inside it, so a bad
-frame can be classified GPU-bound vs main-thread rather than merely counted.
-**Note on the Chrome numbers:** Chrome measured worse than Safari on every
-percentile while feeling the same, and *every* span rose by a similar factor
-(revisionWalk 2.41→7.72 ms, leadFieldFrame 0.348→1.233, raycast 0.076→0.263).
-That is a different sampling environment, not one path turning pathological —
-`revisionWalk` is explicitly not concluded to be the cause.
-**Acceptance:** report pasted into `PERFORMANCE_BASELINE.md`; the dominant case
-ranked by **p99 / >33 ms count / GPU fence p95**, never by mean; interpretation
-follows the decision tree in round 6 §H.
-**Model:** Opus. Fable only once a fix is agreed and is genuinely visual.
+Answer two questions — the second matters as much as the first:
+1. Does the optimised path feel smoother?
+2. **Can you see any visual difference at all?** If the panels read as cheaper
+   or flatter, say so; the alpha is one line to retune.
+Then `http://localhost:4173/?matrix=1` again for numbers comparable to round 6.
+**Why now:** round 7 removed all four backdrop blurs from shipping CSS and
+halved the bloom render resolution. Visual fidelity is verified by pixel diff
+(full page mean 0.42/255; `?legacyfx=1` reproduces the old look exactly), but
+**no performance gain is claimed** — the measuring machine cannot resolve the
+change and reported the optimised path slower on a tiny, noisy sample.
+**Acceptance:** subjective verdict on both smoothness and fidelity, plus a
+matrix table; `PERFORMANCE_BASELINE.md` updated with the result.
+**Model:** Opus. Fable only if the owner reports a genuine visual downgrade.
 
-## 1-old. (closed) Safari `?backdrop=off` A/B — RUN, contributor confirmed (partial)
+## 1-cheap. Also worth one minute: OrbitControls damping
+Every round has measured healthy frame delivery while the owner reports lag.
+`OrbitControls` uses `enableDamping` with `dampingFactor: 0.06` — a slow
+constant, so the camera keeps gliding after input stops. That reads as lag at
+any frame rate and is not a performance problem. **Never tested.** If the
+complaint is "the camera feels heavy / keeps moving after I let go" rather than
+"the picture stutters", this explains more than anything measured so far.
+
+## 1-old. (closed) `?matrix=1` on the M1 — RUN, no configuration in distress
+Baseline ~59fps; p99 spanned only 23–27ms across ten cases; two work-removing
+cases measured worse. Cleanest was `fx=off backdrop=off` (p99 23, max 32, zero
+frames >33ms). Recorded in `PERFORMANCE_BASELINE.md` round 7 §A.
+
+## 1-older. (closed) Safari `?backdrop=off` A/B — RUN, contributor confirmed (partial)
 Owner verdict: **noticeable improvement, significant lag remains.** The four
 backdrop blurs are a real contributor, not the primary cause. Preserved for a
 later cosmetic fix; not optimised yet. Also: Safari ≈ Chrome subjectively on

@@ -17,7 +17,7 @@ import { CameraRig } from './CameraRig';
 import { SkillRing } from './SkillRing';
 import { UniverseOverlay } from './UniverseOverlay';
 import { APOAPSIS } from '../domain/gravity';
-import { DIAG, installRenderProbe } from '../diag/diagnostics';
+import { DIAG, LEGACY_FX, installRenderProbe } from '../diag/diagnostics';
 
 /**
  * `?fx=off` disables the post pipeline (§20: degrade gracefully on weaker
@@ -90,6 +90,14 @@ export function Universe() {
           luminanceThreshold={0.5}
           luminanceSmoothing={0.22}
           radius={0.5}
+          // Bloom renders at half resolution (quarter the fragments) and is
+          // upsampled by the mip chain. Its output is a blur, so the detail
+          // discarded here is detail the effect was about to destroy anyway —
+          // the glow's radius, intensity and colour are unchanged, which is why
+          // this is an implementation change rather than a visual one. The
+          // scene itself still renders at full DPR 2; only the bloom pyramid is
+          // smaller. `?legacyfx=1` restores full-resolution bloom for A/B.
+          resolutionScale={LEGACY_FX ? 1 : 0.5}
         />
         <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
       </EffectComposer>

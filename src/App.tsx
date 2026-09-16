@@ -19,7 +19,14 @@ import { Orchestrator } from './ui/Orchestrator';
 import { AppointmentCentre } from './ui/AppointmentCentre';
 import { SystemState } from './ui/SystemState';
 import { UniverseBoundary } from './ui/UniverseBoundary';
-import { DIAG, applyBackdropFlag, runBenchIfRequested, runJankIfRequested, runMatrixIfRequested } from './diag/diagnostics';
+import {
+  DIAG,
+  applyBackdropFlag,
+  applyLegacyFx,
+  runBenchIfRequested,
+  runJankIfRequested,
+  runMatrixIfRequested,
+} from './diag/diagnostics';
 import { DiagOverlay } from './diag/DiagOverlay';
 import './App.css';
 
@@ -112,6 +119,7 @@ export default function App() {
   // All no-ops without their flags.
   useEffect(() => {
     applyBackdropFlag();
+    applyLegacyFx();
     runBenchIfRequested();
     runJankIfRequested();
     runMatrixIfRequested();
