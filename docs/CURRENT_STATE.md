@@ -190,13 +190,34 @@ Ruled out as primary: CPU/JS, React reconciliation, Zustand, raycasting, the
 revision walk, draw calls, Three.js object updates — and, from the owner's own
 round-2 table, fill rate and post-processing.
 
-**No bottleneck is confirmed. The cause is real but unlocated**, which is a
-result, not a stall. Next action is the owner running `?jank=1`, `?sweep=1` and
-`?sweep=drag` on the Air — and confirming whether the grade-D experience was on
-`npm run dev` (unminified React + StrictMode double-invoke) or the production
-preview, which would explain a gap no production benchmark can reproduce.
-`PERFORMANCE_BASELINE.md` records the three possible outcomes and what each
-would mean, written before the data arrives.
+**Round 4 (same day): the production build measures HEALTHY on the owner's M1,
+and the owner still reports grade D.** Drag sweep: 901 frames, p99 23 ms, max
+28 ms, **zero** frames over 33 ms, zero long tasks, no input event over 16 ms.
+Idle and pointer sweep similar (p99 26–27 ms). Spans matched this machine
+almost exactly. This is read as evidence the harness measures something other
+than what the owner experiences — **not** that the app is fine.
+
+Measured dev vs production on the same machine with the same harness: app
+spans are **identical** (`revisionWalk` 1.79 vs 1.84 ms, `ingest` 0.05 vs
+0.06 ms), but dev carries **~1.9× the main-thread long-task load** (188–196
+tasks vs 100–106; 14.5–14.8 s vs 7.9 s) and loads 4.3× slower (529 ms / 63
+requests vs 122 ms / 2). The dev penalty — StrictMode double-invoking renders
+and effects, unminified React reconciliation — lands in React's work, which
+**no instrumented span covers**. A dev session can therefore feel much worse
+while every span reads normal.
+
+**Defect disclosed, not patched:** `installLongTaskObserver()` reports
+`count=0` when `observe()` throws, and **Safari implements
+`PerformanceObserver` but not the `longtask` entry type**. Every "0 long tasks"
+line so far is a *false negative* if the runs were in Safari. The report header
+also does not record build mode, so two pasted reports are indistinguishable
+without labelling. Both are one-line fixes, deferred because round 4 was scoped
+to no application-code changes.
+
+**Still no bottleneck confirmed; the owner's report stands unexplained.** Next
+action is the dev-vs-production A/B on the Air plus three environment questions
+(everyday port, Chrome vs Safari, power/display state) — `NEXT_ACTIONS.md`
+item 1.
 
 ## Known issues and unverified claims
 

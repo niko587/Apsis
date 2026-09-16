@@ -86,7 +86,7 @@
     "never rewrite published history on main without owner instruction (D19)"
   ],
   "blocked": [
-    { "what": "M1 jank/interaction probes (?jank=1, ?sweep=1, ?sweep=drag) + confirm dev-server vs production preview", "on": "owner's hardware (2020 M1 MacBook Air, fanless, dpr 2)", "ref": "NEXT_ACTIONS.md#1" }
+    { "what": "M1 dev-vs-production A/B (?jank=1 and ?sweep=drag on :5173 vs :4173) + confirm everyday port, Chrome vs Safari, power/display state", "on": "owner's hardware (2020 M1 MacBook Air, fanless, dpr 2)", "ref": "NEXT_ACTIONS.md#1" }
   ],
   "performance": {
     "baseline": "docs/PERFORMANCE_BASELINE.md (2026-09-15)",
@@ -108,7 +108,13 @@
     "round3": "bench median was the vsync interval quantised (58.8fps/17.0ms in all 9 configs, incl. field=off); added distribution p95/p99/max, >20/33/50/100ms buckets, longtask, Event Timing input latency, per-path spans, and scripted pointer + drag sweeps",
     "measured_js_at_4892": "revisionWalk 1.7-2.1ms x ~9/s; Points.raycast 0.094ms scanning all 4892 (confirmed O(n), 596824 points / 122 calls); settled frame loop 0.063ms; ingest 0.055ms incl subscribers; TOTAL ~2.7% of one core",
     "ruled_out_round3": ["CPU/main-thread JS", "React reconciliation", "Zustand store updates", "pointer raycasting (at 4892)", "the full-book revision walk (real waste, wrong magnitude)"],
-    "primary_bottleneck": "UNKNOWN — every candidate the instruments can see is eliminated; cause is real but unlocated. Next: ?jank=1 / ?sweep=1 / ?sweep=drag on the M1, and confirm dev-server vs production preview",
+    "round4": "production build measures HEALTHY on the owner's M1 (drag sweep 901 frames, p99 23ms, max 28ms, ZERO frames >33ms, zero long tasks) while the owner still reports grade D — read as the harness measuring the wrong thing, not as the app being fine",
+    "dev_vs_prod_measured": "app spans identical (revisionWalk 1.79 vs 1.84ms); dev carries ~1.9x the main-thread long-task load (188-196 vs 100-106 tasks) and loads 4.3x slower; the dev penalty lands in React render work that NO instrumented span covers",
+    "instrument_defects_known": [
+      "installLongTaskObserver reports count=0 when observe() throws — Safari has PerformanceObserver but not the longtask entry type, so every '0 long tasks' reading is a FALSE NEGATIVE on Safari",
+      "the jank report header does not record build mode (dev vs production), so two pasted reports are indistinguishable without manual labelling"
+    ],
+    "primary_bottleneck": "UNKNOWN — production measures healthy on the owner's hardware; subjective grade D stands unexplained. Next: dev-vs-production A/B on the M1 plus environment questions (port, browser, power state)",
     "optimization_applied": "none"
   },
   "repo": {

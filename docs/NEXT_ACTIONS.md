@@ -22,31 +22,42 @@ The owner reports subjective grade **D** on a 2020 M1 MacBook Air. That is now
 the project's top priority. Round 1's hypothesis was refuted by real hardware;
 item 1 is the ~90-second run that ranks what is left.
 
-## 1. Run the jank/interaction probes on the M1 — BLOCKED on owner
-**What:** three runs, each printing a copyable block:
+## 1. Dev-vs-production A/B on the M1, and three environment questions — BLOCKED on owner
+**What:** two runs against the **dev** server, to compare with the production
+numbers already collected:
 ```
-http://localhost:4173/?jank=1&seconds=15        # idle: tail + long tasks
-http://localhost:4173/?sweep=1&seconds=15       # hover/raycast under pointer motion
-http://localhost:4173/?sweep=drag&seconds=15    # orbiting — the real interaction
+npm run dev                                  # -> http://localhost:5173
+http://localhost:5173/?jank=1&seconds=15
+http://localhost:5173/?sweep=drag&seconds=15
 ```
-**And answer one question that may make all of it moot:** was the grade-D
-experience on `npm run dev` or on the production preview? The dev server runs
-unminified React with StrictMode double-invoking renders and effects, and is
-legitimately much slower than the build the benchmarks measure.
-**Why now:** round 3 eliminated every candidate the current instruments can
-see — JS is ~2.7% of one core at 4,892 leads; React, the store, raycasting,
-draw calls and Three.js updates are all cheap; and round 2 already showed on
-the owner's own hardware that removing the field, the Core and the post chain
-changes nothing. The cause is real but **unlocated**, and round 2's
-58.8 fps / 17.0 ms was just the vsync interval quantised — a median cannot see
-jank or input latency. These three runs report p95/p99/max, frames over
-20/33/50/100 ms, long tasks, and Event Timing input delay.
-**Acceptance:** blocks pasted into `PERFORMANCE_BASELINE.md`; the branch taken
-(main-thread jank / input-path latency / environmental) recorded; only then is
-a fix chosen.
-**Model:** Opus. Fable only if the answer turns out to be visual.
+Label each block (the report does not yet record build mode), and answer:
+1. **Which port is the everyday one?** If the grade-D experience is on `:5173`,
+   that is the explanation and the remedy is "run the production build".
+2. **Chrome or Safari?** Safari implements `PerformanceObserver` but not the
+   `longtask` entry type, so every "0 long tasks" line so far is a **false
+   negative** on Safari. If Safari, the next measurement is a Web Inspector
+   timeline, not this harness.
+3. **Battery or mains, Low Power Mode, external display, browser zoom?** Each
+   materially changes a fanless M1 Air and none is visible to the harness.
+**Why now:** the production build measures *healthy* on the owner's M1 — drag
+sweep 901 frames, zero over 33 ms, zero long tasks, p99 23 ms — while the owner
+still reports grade D. Measured on the same machine with the same harness, dev
+carries **~1.9× the main-thread long-task load** (188–196 vs 100–106 tasks),
+and that penalty appears in **no instrumented span**, because the spans time
+Apsis's own code paths while the dev cost lands in React's render work. A dev
+session can therefore feel much worse while every span reads normal.
+**Acceptance:** dev blocks pasted into `PERFORMANCE_BASELINE.md` beside the
+production ones; browser and power state recorded; the branch taken written
+down. Only then is any fix chosen.
+**Model:** Opus. Fable not until the answer is known to be visual.
 
-## 1-old. (closed) `?bench=1` on the M1 — RUN, median uninformative
+## 1-old. (closed) jank/interaction probes on the M1 — RUN, production measures healthy
+idle p99 26 ms / drag p99 23 ms, max 28 ms, **zero** frames over 33 ms in the
+drag sweep, zero long tasks, no input event over 16 ms. Recorded in
+`PERFORMANCE_BASELINE.md` round 4. Treated as evidence the harness measures
+something other than what the owner experiences — not that the app is fine.
+
+## 1-older. (closed) `?bench=1` on the M1 — RUN, median uninformative
 All nine configurations returned 58.8 fps / 17.0 ms, including `field=off` and
 `core=off`. That is the vsync interval quantised, not a finding. Recorded in
 `PERFORMANCE_BASELINE.md` round 3.

@@ -577,3 +577,123 @@ default book — invisible to a human. Substantial only at 20k+ leads.
 **G. Risk:** none of the above touches visuals; the risk is doing it, seeing no
 improvement, and concluding performance work is hopeless. It is not hopeless —
 it is unlocated.
+
+---
+
+# Round 4: dev vs production, and a defect in the instrument
+
+_2026-09-15. No application code changed. No optimization. Docs only._
+
+## The M1 production numbers are healthy
+
+Owner's round-3 runs on the 2020 M1 Air against the production preview:
+
+| run | frames | mean | median | p95 | p99 | max | >33ms | >50ms | long tasks |
+|---|---|---|---|---|---|---|---|---|---|
+| idle | 886 | 16.9 | 17 | 20 | 26 | 142 | 5 | 2 | **0** |
+| pointer sweep | 882 | 17.0 | 17 | 19 | 27 | 126 | 7 | 5 | **0** |
+| drag sweep | 901 | 16.7 | 17 | 19 | 23 | **28** | **0** | **0** | **0** |
+
+No input event exceeded 16 ms. Spans matched the measuring machine almost
+exactly (`revisionWalk` ~1.76 ms, `leadFieldFrame` ~0.34 ms, `ingest` ~0.05 ms,
+`pointsRaycast` ~0.05 ms).
+
+**That is a well-behaved 60 fps application.** The drag sweep — the interaction
+most likely to feel bad — did not produce a single frame over 33 ms across 901
+frames. This should be read as evidence that **the harness is measuring
+something other than what the owner experiences**, not as evidence the app is
+fine. The owner's report stands.
+
+## How to run each mode
+
+```bash
+export PATH=/usr/local/bin:$PATH     # node lives only here on this machine
+cd ~/Downloads/apsis
+
+npm run dev                          # development  -> http://localhost:5173
+npm run build && npm run preview -- --port 4173   # production -> :4173
+```
+
+Both can run at once; the ports are what distinguish the two builds.
+
+## Dev vs production — the differences that matter
+
+- **StrictMode is active** (`src/main.tsx:6` wraps `<App />`). The component
+  exists in both builds, but its double-invoke behaviour — rendering every
+  component twice and mounting→unmounting→remounting every effect — is
+  **development-only**. Production skips it.
+- **React is unminified in dev and is a different build**: prop-type checks,
+  dev warnings, richer errors, profiling hooks. Reconciliation is materially
+  slower independent of StrictMode.
+- **Vite serves unbundled ESM in dev** with on-the-fly transforms and an HMR
+  WebSocket; production serves one minified bundle.
+- **Production removes all three.** Every benchmark in rounds 2–4 targeted
+  `:4173` for exactly that reason.
+
+## Measured, not asserted (measuring machine, identical harness, 8 s windows)
+
+| | DEV (5173) | PROD (4173) | ratio |
+|---|---|---|---|
+| long tasks, idle | 188 (14,550 ms) | 100 (7,964 ms) | **1.9×** |
+| long tasks, drag | 196 (14,802 ms) | 106 (7,886 ms) | **1.85×** |
+| load time / resource requests | 529 ms / 63 | 122 ms / 2 | 4.3× |
+| `revisionWalk` mean | 1.837 / 1.657 ms | 1.792 / 1.726 ms | 1.0× |
+| `leadFieldFrame` mean | 0.727 / 0.551 ms | 0.542 / 0.536 ms | ~1.0× |
+| `ingest` mean | 0.060 / 0.054 ms | 0.068 / 0.032 ms | ~1.0× |
+
+**The finding: dev roughly doubles main-thread long-task load, and the penalty
+does not appear in any instrumented span.** The spans time Apsis's own code
+paths; the dev cost lands in React's render work, which nothing here measures.
+So a dev-mode session can feel substantially worse while every span reads
+normal — which is precisely the shape of the owner's situation.
+
+This does not prove the owner was running dev. It establishes that dev is
+measurably worse in a way the current instruments would *not* attribute, and
+that the hypothesis is worth one direct test rather than more inference.
+
+## Defect found in the instrument (disclosed, not silently patched)
+
+`installLongTaskObserver()` catches the `observe()` failure but leaves the
+counters at zero, and the report only prints "unsupported" when
+`PerformanceObserver` itself is absent. **Safari implements
+`PerformanceObserver` but not the `longtask` entry type** — so a Safari run
+reports `count=0 total=0 max=0`, which reads as "no jank" when it actually
+means "cannot see jank".
+
+**Consequence: the owner's "0 long tasks" is only meaningful if the runs were
+in Chrome.** If they were in Safari, that line is a false negative and the
+jank question is still open on that browser. The one-line fix is to track
+whether `observe()` succeeded and print "unsupported" when it did not; it was
+not applied because round 4 was scoped to no application-code changes.
+
+## Exact next test
+
+Two runs in **dev**, to compare against the production numbers already in hand:
+
+```
+http://localhost:5173/?jank=1&seconds=15
+http://localhost:5173/?sweep=drag&seconds=15
+```
+
+Label them (the report header does not yet record build mode — see below), and
+answer three questions:
+
+1. **Which URL/port is the everyday one?** If the grade-D experience is on
+   `:5173`, the comparison above is the explanation and the fix is "use the
+   production build", not a code change.
+2. **Chrome or Safari?** If Safari, the long-task line in every report so far
+   is a false negative, and the next measurement must be a Safari Web Inspector
+   timeline instead of `PerformanceObserver`.
+3. **Battery or mains, Low Power Mode, external display, browser zoom?** Each
+   changes a fanless M1 Air materially, and none is visible to the harness.
+
+Known gap: the report header records mode, leads, fx, dpr, window size and
+user-agent, but **not whether the bundle was built in dev or production**, so
+two pasted reports are indistinguishable without labelling. Fix is one line
+using `import.meta.env.MODE`; deferred for the same scope reason.
+
+## Status
+
+No bottleneck confirmed. No optimization implemented. The production build on
+the owner's M1 measures healthy; dev measures ~1.9× the long-task load; the
+owner's subjective report is unexplained and stands.
