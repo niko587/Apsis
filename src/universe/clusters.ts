@@ -204,9 +204,116 @@ export interface PathStep {
 export const stepLabel = (step: PathStep): string =>
   DIMENSIONS[step.dimensionId]?.labelFor(step.key) ?? step.key;
 
-/** The dimension the NEXT drill would group by, or null at full depth. */
-export const nextDimension = (path: readonly PathStep[]): ClusterDimension | null =>
-  DRILL_SEQUENCE[path.length] ?? null;
+/**
+ * How deep the analytical drill goes before the next step is an individual lead.
+ *
+ * DELIBERATELY NOT `DRILL_SEQUENCE.length` (D50). They are both four today, and
+ * that is a coincidence of the current default suggestions — not a definition.
+ * Tying focus depth to the length of a convenience list would mean that adding
+ * a fifth default grouping silently changed when §14 spatial focus engages.
+ */
+export const MAX_DRILL_DEPTH = 4;
+
+/** Registry order, fixed once. Availability and resolution both read it. */
+const DIMENSION_IDS: readonly string[] = Object.keys(DIMENSIONS);
+
+/**
+ * Which dimensions can actually split the current cluster (D49).
+ *
+ * ONE rule — "does this produce two or more children?" — and every case falls
+ * out of it. A dimension already in the path leaves every member sharing its
+ * key, so it yields one child. `region` after `state` is already determined, so
+ * it yields one child. A dimension where every member happens to share a value
+ * yields one child. None of those need a compatibility table, a "used" set, or
+ * a geography special case, and none is present here.
+ *
+ * EXACTLY ONE TRAVERSAL OF `leads` (D53). Production calls this with
+ * `leads.values()`, which is a single-pass Map iterator, so the obvious
+ * `for (dimension) for (lead)` shape would let only the first dimension see the
+ * book and silently report every other one as unavailable — a picker that only
+ * ever offers `region`, with nothing in the code looking wrong. So the loop is
+ * inverted: one pass over the leads, every candidate advanced together.
+ *
+ * O(members × dimensions), and at most two retained keys per dimension: once a
+ * dimension has seen two distinct keys it is proven, and its key set is dropped.
+ */
+export function availableDimensions(
+  leads: Iterable<Lead>,
+  path: readonly PathStep[],
+): ClusterDimension[] {
+  const pending = new Map<string, Set<string>>();
+  const proven = new Set<string>();
+  for (const id of DIMENSION_IDS) pending.set(id, new Set());
+
+  for (const lead of leads) {
+    if (!matchesPath(lead, path)) continue;
+    if (pending.size === 0) continue; // everything proven; finish the pass cheaply
+    for (const [id, keys] of pending) {
+      const key = DIMENSIONS[id]!.keyFor(lead);
+      if (key === null || keys.has(key)) continue;
+      keys.add(key);
+      if (keys.size >= 2) {
+        proven.add(id);
+        pending.delete(id); // no more key storage for this dimension
+      }
+    }
+  }
+
+  // Registry order, so the picker is stable between renders.
+  return DIMENSION_IDS.filter((id) => proven.has(id)).map((id) => DIMENSIONS[id]!);
+}
+
+export interface NextDimensionResolution {
+  /** What the next drill groups by, or null when the path is terminal/unsplittable. */
+  readonly dimension: ClusterDimension | null;
+  /** The availability list the resolution used. Handed on so nobody recomputes it. */
+  readonly available: ClusterDimension[];
+}
+
+/**
+ * THE single decision about what the next grouping is (D52).
+ *
+ * The heading, the picker's active state and `clusterChildren` all consume this
+ * one result. An earlier design resolved a null selection straight to
+ * `DRILL_SEQUENCE[path.length]`, which breaks in two ordinary cases:
+ *
+ *   - `Agent → Timeframe → Segment` leaves a depth whose raw default is
+ *     `segment`, already used, so it yields one child;
+ *   - `City` at depth 0 leaves a depth whose raw default is `state`, already
+ *     determined by the city, so it yields one child.
+ *
+ * Both would have violated D49 while the heading cheerfully announced the
+ * dimension. So resolution may step PAST a default that cannot split.
+ *
+ * Resolving the next grouping is not rewriting history: `path` is never touched,
+ * and a selection that has stopped being available is superseded for this level
+ * rather than deleted — the next navigation clears it anyway.
+ */
+export function effectiveNextDimension(
+  leads: Iterable<Lead>,
+  path: readonly PathStep[],
+  selectedId: string | null = null,
+): NextDimensionResolution {
+  if (path.length >= MAX_DRILL_DEPTH) return { dimension: null, available: [] };
+
+  const available = availableDimensions(leads, path);
+  if (available.length === 0) return { dimension: null, available };
+
+  const selected = selectedId
+    ? available.find((d) => d.id === selectedId)
+    : undefined;
+  if (selected) return { dimension: selected, available };
+
+  const fallbackId = DRILL_SEQUENCE[path.length]?.id;
+  const byDefault = fallbackId
+    ? available.find((d) => d.id === fallbackId)
+    : undefined;
+  if (byDefault) return { dimension: byDefault, available };
+
+  // Stable registry order — never child count, which would reshuffle the menu
+  // as the feed lands.
+  return { dimension: available[0]!, available };
+}
 
 /** Allocation-free: is this lead inside the drilled cluster? */
 export function matchesPath(lead: Lead, path: readonly PathStep[]): boolean {
@@ -230,8 +337,13 @@ export interface ClusterChild {
 export function clusterChildren(
   leads: Iterable<Lead>,
   path: readonly PathStep[],
+  /**
+   * The resolved grouping, from `effectiveNextDimension`. Passed in rather than
+   * re-derived: a second derivation is how the heading and the child list come
+   * to disagree about what they are showing (D52).
+   */
+  dim: ClusterDimension | null,
 ): { children: ClusterChild[]; members: number } {
-  const dim = nextDimension(path);
   const counts = new Map<string, number>();
   let members = 0;
   for (const lead of leads) {

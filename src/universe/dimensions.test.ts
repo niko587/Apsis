@@ -25,6 +25,7 @@ import {
   UNASSIGNED,
   clusterChildren,
   createTimeframeDimension,
+  effectiveNextDimension,
   type ClusterDimension,
 } from './clusters';
 import type { Lead } from '../domain/types';
@@ -167,7 +168,7 @@ describe('every new dimension partitions its parent', () => {
   it('clusterChildren reports every member of the parent set', () => {
     // clusterChildren groups by DRILL_SEQUENCE, so this asserts the invariant it
     // actually relies on: the parent count it reports is the whole book.
-    const { members } = clusterChildren(leads, []);
+    const { members } = clusterChildren(leads, [], effectiveNextDimension(leads, [], null).dimension);
     expect(members).toBe(leads.length);
   });
 

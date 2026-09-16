@@ -29,7 +29,7 @@ import * as THREE from 'three';
 import { APOAPSIS, positionFor } from '../domain/gravity';
 import { readIndexOf, readLeads, useApsis } from '../state/store';
 import { useReducedMotion } from '../ui/useReducedMotion';
-import { DRILL_SEQUENCE, matchesPath, type PathStep } from './clusters';
+import { MAX_DRILL_DEPTH, matchesPath, type PathStep } from './clusters';
 import { readDrillPath } from '../state/drillStore';
 import { readField } from './fieldHandle';
 
@@ -156,7 +156,7 @@ export function CameraRig() {
     const appState = useApsis.getState();
     let focusIdx = -1;
     let focusId: string | null = null;
-    if (appState.selectedLeadId && focus.depth >= DRILL_SEQUENCE.length && field) {
+    if (appState.selectedLeadId && focus.depth >= MAX_DRILL_DEPTH && field) {
       const lead = appState.leads.get(appState.selectedLeadId);
       if (lead && matchesPath(lead, path)) {
         const idx = readIndexOf().get(lead.id);

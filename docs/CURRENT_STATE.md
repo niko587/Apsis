@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-09-16 (dynamic drill contract + correctness revision;
+_Last updated: 2026-09-16 (dynamic drill dimensions IMPLEMENTED;
 previous phase: authentication)_
 
 This file is the snapshot an external AI project manager should trust over any
@@ -11,8 +11,8 @@ conversation history. It describes the repository as it actually is.
 | Check | Status | Command |
 |---|---|---|
 | TypeScript | clean (4 projects: app, node, e2e, server) | `npm run typecheck` |
-| Unit tests | **432 / 432 passing** (23 files) | `npm test` |
-| Browser suite | **66 / 66 passing** | `npm run test:e2e` |
+| Unit tests | **459 / 459 passing** (24 files) | `npm test` |
+| Browser suite | **81 / 81 passing** | `npm run test:e2e` |
 | Lint | exit 0 (warnings only, see below) | `npm run lint` |
 | Production build | green, ~1.27 MB bundle (350 KB gz) | `npm run build` |
 | Runtime console | 0 errors at load and through drill/command flows | — |
@@ -37,9 +37,10 @@ size, `?fx=off` disables post-processing. Playwright needs browsers once:
 - Command bar: real grammar → understood-chips + ignored-words + funnel +
   field highlight + agent dispatch. Nationwide geography (cities, full state
   names, uppercase two-letter codes).
-- Cluster drill (§15): GLOBAL → region → state → city → segment → individual,
-  camera framing move, out-of-cluster leads dimmed not removed, breadcrumb +
-  scrollable child chips, Esc backs out.
+- Cluster drill (§15): GLOBAL → region → state → city → segment → individual by
+  default, and **now any four-step path the book supports** — the heading is a
+  dimension picker (D48–D57). Camera framing move, out-of-cluster leads dimmed
+  not removed, breadcrumb + scrollable child chips, Esc backs out.
 - Active Skills panel (§12) derived from live tasks/feed; expires by wall clock.
 - Appointment centre (§16), lead detail (§14 content), telemetry (§17),
   accessibility (§21: listbox universe, keyboard camera, live regions, reduced
@@ -392,12 +393,12 @@ of which would only have failed in production:
    per identity and an amortised five-minute sweep; `RateLimiter.size()` is what
    makes reclamation testable at all.
 
-## Current milestone: dynamic drill dimensions (contract only)
+## Dynamic drill dimensions (2026-09-16) — IMPLEMENTED
 
 §15 registered nine dimensions — region, state, city, segment, campaign, source,
 agent, timeframe, temperature. **Four are reachable; five are real, tested and
-have no UI.** Contract: `docs/CONTRACT_DYNAMIC_DRILL_DIMENSIONS.md`, **not
-implemented**.
+had no UI.** All nine are now reachable through a per-level picker. Contract:
+`docs/CONTRACT_DYNAMIC_DRILL_DIMENSIONS.md`, met in full.
 
 **Interaction: choose the next grouping at each level (D48).** Presets were
 rejected — a named library to maintain, a second concept before the user asked
@@ -442,6 +443,42 @@ three of them contradictions inside the contract itself:
   **withdrawn**. `LeadList.tsx` still stays forbidden — on evidence: in-cluster
   search is applied *before* the cap, so every member is one keystroke away, and
   the header already reads `showing 150 of 266 · narrow the drill or search`.
+
+**Delivered.** `src/universe/clusters.ts` gained `MAX_DRILL_DEPTH`,
+`availableDimensions(leads, path)` and `effectiveNextDimension(leads, path,
+selectedId)`; `nextDimension(path)` was **removed** rather than kept alongside,
+so there is exactly one decision path and `clusterChildren` now takes the
+resolved dimension as an argument. `drillStore` gained `nextDimensionId` and
+`chooseNextDimension`, cleared by every navigation. `UniverseOverlay` turns the
+heading into the picker trigger and consumes one resolution for the heading, the
+menu and the child list. `CameraRig` and `SelectedLeadFocus` changed by one
+constant each (`DRILL_SEQUENCE.length` → `MAX_DRILL_DEPTH`). **`LeadField.tsx`
+and `LeadList.tsx` are byte-unchanged**, which was the architectural proof.
+Unit 432 → 459, browser 66 → 81. **No dependency added.**
+
+**Availability is measured, not declared.** `availableDimensions` makes a single
+pass over the lead iterable (D53), keeping a pending key-set per dimension and
+retiring a dimension the moment it reaches two distinct keys — so the common
+case does not read the whole book. Measured at 0.58–3.0 ms on the 4,892-lead
+book, cheaper than the `clusterChildren` walk that already ran beside it, and it
+runs on the existing throttled cadence rather than on picker-open, because the
+*effective* dimension depends on it.
+
+**What a user who ignores the picker sees: today's screen.** Proven by running
+the protected specs at a checkpoint where `availableDimensions` and
+`effectiveNextDimension` existed and the picker did not — `drill.spec.ts`,
+`spatial-focus.spec.ts`, `progressive-reveal.spec.ts` and `reachability.spec.ts`
+green, unmodified. A browser test also samples a fixed clip of pure field before
+and after a regrouping and asserts the pixels are identical: **grouping is not
+movement** (D57).
+
+**Two things the implementation corrected about its own plan.** The default at a
+depth is *positional* — after a dynamic first step, depth 1 still suggests
+`DRILL_SEQUENCE[1]` (`state`), not `region` (D55). And the 266-lead terminal is
+asserted in a unit test against the pure seeded book; the running app applies
+decay at boot, so temperature buckets drift and the browser asserts the *shape*
+(`showing 150 of N`, N > 150) instead of a number that is not stable there
+(D56).
 
 ## Authentication and access control (2026-09-16) — IMPLEMENTED
 

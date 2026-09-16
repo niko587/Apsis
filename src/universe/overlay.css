@@ -320,3 +320,70 @@
   text-transform: uppercase;
   color: var(--accent);
 }
+
+/* ---- dimension picker ---- */
+/* The heading already said "Drill into city". This makes that word a control
+   and adds no vertical weight when closed — the Universe stays dominant. */
+.uv-dim-trigger {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-bottom: 1px dotted rgba(143, 107, 255, 0.5);
+  padding: 0 0 1px;
+  cursor: pointer;
+}
+.uv-dim-trigger:hover { border-bottom-color: var(--accent); }
+.uv-dim-caret { margin-left: 4px; font-size: 8px; opacity: 0.7; }
+
+/* OUTLINED, where the child chips are filled: visibly a different KIND of
+   choice — what to group by, not which group to enter. */
+.uv-dims {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0 0 7px;
+  padding: 0 3px 0 0;
+  /* Scrolls inside its own box. The page never scrolls horizontally, and the
+     rail is untouched because this lives in the stage overlay. */
+  max-height: 84px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(122, 138, 190, 0.3) transparent;
+}
+.uv-dims::-webkit-scrollbar { width: 6px; }
+.uv-dims::-webkit-scrollbar-track { background: transparent; }
+.uv-dims::-webkit-scrollbar-thumb {
+  background: rgba(122, 138, 190, 0.26);
+  border-radius: 999px;
+}
+.uv-dims button {
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted);
+  background: none;
+  border: 1px solid rgba(122, 138, 190, 0.3);
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.uv-dims button:hover { color: var(--text); border-color: rgba(143, 107, 255, 0.5); }
+.uv-dims button[aria-current='true'] {
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(143, 107, 255, 0.25);
+}
+
+/* The dimension of a step that diverges from the default for its depth.
+   Absent on a default path, so today's breadcrumb is unchanged. */
+.uv-crumb-dim {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-right: 5px;
+}

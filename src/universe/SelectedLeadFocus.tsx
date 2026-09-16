@@ -42,7 +42,7 @@ import { readIndexOf, useApsis } from '../state/store';
 import { readDrillPath, useDrill } from '../state/drillStore';
 import { useThrottledRevision } from '../ui/useThrottledRevision';
 import { useReducedMotion } from '../ui/useReducedMotion';
-import { DRILL_SEQUENCE, matchesPath, type PathStep } from './clusters';
+import { MAX_DRILL_DEPTH, matchesPath, type PathStep } from './clusters';
 import { readField } from './fieldHandle';
 
 const TAU = Math.PI * 2;
@@ -60,7 +60,7 @@ export function isIndividualFocus(
   lead: Lead | null | undefined,
   path: readonly PathStep[],
 ): boolean {
-  return !!lead && path.length >= DRILL_SEQUENCE.length && matchesPath(lead, path);
+  return !!lead && path.length >= MAX_DRILL_DEPTH && matchesPath(lead, path);
 }
 
 /**

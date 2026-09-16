@@ -1,6 +1,6 @@
 # Next Actions
 
-_Last updated: 2026-09-16 (dynamic drill contract, correctness revision).
+_Last updated: 2026-09-16 (dynamic drill dimensions implemented).
 Ordered. Each item: what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
@@ -46,9 +46,11 @@ exist in this environment: a real WorkOS development sign-in, and the Anthropic
 live smoke test. Exact commands for both are in the README. Neither blocks the
 current milestone.
 
-The current milestone is **dynamic drill dimensions** (§1e) — contract written
-and binding at `docs/CONTRACT_DYNAMIC_DRILL_DIMENSIONS.md`, **not yet
-implemented**.
+**Dynamic drill dimensions are implemented** (§1e) — all nine registered
+dimensions are reachable through a per-level picker, and a user who never opens
+it walks the same path as before. **Nothing is open.** The only remaining
+milestone-independent work is the two live verifications above and the optional
+hygiene item in §3.
 
 ## 0. (closed) Reachability suite over-strictness — FIXED, CI trust restored
 The assertion required an element's whole bounding box inside the viewport,
@@ -272,17 +274,30 @@ browser 65 (was 48). D41 records what is structural; D42–D45 the closeout.
 The moment real customer data is served from the server, the app-wide gate
 becomes mandatory.
 
-## 1e. Dynamic drill dimensions — **CURRENT MILESTONE**
-**MODEL: OPUS.** Contract written and committed:
+## 1e. (closed) Dynamic drill dimensions — IMPLEMENTED
+**MODEL: OPUS.** Contract met in full:
 **`docs/CONTRACT_DYNAMIC_DRILL_DIMENSIONS.md`** — mental model, interaction
 choice, default behaviour, state, path semantics, availability rules, depth rule,
 live-path validity, camera, field, roster, breadcrumbs, picker spec, responsive,
 a11y, reduced motion, persistence, file boundaries, 17 unit + 15 browser tests,
 performance acceptance, acceptance criteria, sequence and the prompt in §AA.
 
-**The gap:** §15 registered nine dimensions — region, state, city, segment,
-campaign, source, agent, timeframe, temperature. Four are reachable. The other
-five are real, tested, and have no UI.
+**The gap, now closed:** §15 registered nine dimensions — region, state, city,
+segment, campaign, source, agent, timeframe, temperature. Four were reachable;
+the other five were real, tested, and had no UI. All nine are reachable now.
+
+**Delivered.** `clusters.ts` gained `MAX_DRILL_DEPTH`, `availableDimensions` and
+`effectiveNextDimension`; `nextDimension(path)` was **removed** so no second
+decision path exists. `drillStore` gained `nextDimensionId`/`chooseNextDimension`,
+cleared by every navigation. `UniverseOverlay` turns the heading into the picker.
+`CameraRig` and `SelectedLeadFocus` changed by one constant each.
+**`LeadField.tsx` and `LeadList.tsx` are byte-unchanged** — the architectural
+proof held. Unit 432 → 459, browser 66 → 81, no dependency added. D55–D57 record
+what the implementation corrected about its own plan: the depth default is
+positional; the 266-lead terminal is asserted against the pure seeded book while
+the browser asserts shape, because the running app's decay drifts temperature
+buckets; and field-position invariance is proven by a fixed clip of pure field
+rather than a canvas screenshot, which would have included the overlay.
 
 **Chosen interaction: choose the next grouping at each level (D48).** Presets
 were rejected — a named library to maintain, a second concept before the user

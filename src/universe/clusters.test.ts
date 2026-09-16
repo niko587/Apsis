@@ -5,8 +5,8 @@ import {
   DIMENSIONS,
   DRILL_SEQUENCE,
   clusterChildren,
+  effectiveNextDimension,
   matchesPath,
-  nextDimension,
   stepLabel,
   type PathStep,
 } from './clusters';
@@ -49,12 +49,14 @@ describe('cluster dimensions (§15)', () => {
       'city',
       'segment',
     ]);
-    expect(nextDimension([])).toBe(DIMENSIONS.region);
-    expect(nextDimension([{ dimensionId: 'region', key: 'South' }])).toBe(
-      DIMENSIONS.state,
-    );
+    // Resolved through the single decision function, with no selection — the
+    // default chain is what an untouched picker produces.
+    const resolve = (path: PathStep[]) =>
+      effectiveNextDimension(leads, path, null).dimension;
+    expect(resolve([])).toBe(DIMENSIONS.region);
+    expect(resolve([{ dimensionId: 'region', key: 'South' }])).toBe(DIMENSIONS.state);
     expect(
-      nextDimension([
+      resolve([
         { dimensionId: 'region', key: 'South' },
         { dimensionId: 'state', key: 'FL' },
       ]),
@@ -83,14 +85,16 @@ describe('cluster dimensions (§15)', () => {
 
   it('child clusters partition the parent exactly — counts must sum to members', () => {
     let path: PathStep[] = [];
-    while (nextDimension(path)) {
-      const { children, members } = clusterChildren(leads, path);
+    for (;;) {
+      const dim = effectiveNextDimension(leads, path, null).dimension;
+      if (!dim) break;
+      const { children, members } = clusterChildren(leads, path, dim);
       expect(children.reduce((n, c) => n + c.count, 0)).toBe(members);
       expect(children.length).toBeGreaterThan(0);
       // Descend into the largest child each time.
-      path = [...path, { dimensionId: nextDimension(path)!.id, key: children[0].key }];
+      path = [...path, { dimensionId: dim.id, key: children[0].key }];
     }
-    const deepest = clusterChildren(leads, path);
+    const deepest = clusterChildren(leads, path, effectiveNextDimension(leads, path, null).dimension);
     expect(deepest.children).toEqual([]);
     expect(deepest.members).toBeGreaterThan(0);
   });
@@ -123,10 +127,12 @@ describe('the book is national (§15 needs something to partition)', () => {
   it('no drill level collapses to a single choice', () => {
     // Walk the largest branch; every level must offer a real decision.
     let path: PathStep[] = [];
-    while (nextDimension(path)) {
-      const { children } = clusterChildren(leads, path);
+    for (;;) {
+      const dim = effectiveNextDimension(leads, path, null).dimension;
+      if (!dim) break;
+      const { children } = clusterChildren(leads, path, dim);
       expect(children.length).toBeGreaterThan(1);
-      path = [...path, { dimensionId: nextDimension(path)!.id, key: children[0].key }];
+      path = [...path, { dimensionId: dim.id, key: children[0].key }];
     }
   });
 

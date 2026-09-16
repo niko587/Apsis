@@ -13,13 +13,15 @@
  * to update at 60Hz.
  */
 
-import { useEffect, useMemo, useReducer, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApsis } from '../state/store';
 import { useThrottledRevision } from '../ui/useThrottledRevision';
 import {
+  DIMENSIONS,
+  DRILL_SEQUENCE,
   clusterChildren,
-  nextDimension,
+  effectiveNextDimension,
   stepLabel,
   type PathStep,
 } from './clusters';
@@ -38,13 +40,48 @@ import './overlay.css';
  * cannot be reached.
  */
 
+const DIM_LIST_ID = 'uv-dim-list';
+
 function ClusterNav() {
   const path = useDrill((s) => s.path);
+  const nextDimensionId = useDrill((s) => s.nextDimensionId);
+  const chooseNextDimension = useDrill((s) => s.chooseNextDimension);
   const push = useDrill((s) => s.push);
   const pop = useDrill((s) => s.pop);
   const toDepth = useDrill((s) => s.toDepth);
   const select = useApsis((s) => s.select);
   const rev = useThrottledRevision(1000);
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const activeDimRef = useRef<HTMLButtonElement>(null);
+  /**
+   * The Escape handler is installed once and must not be re-bound on every
+   * open/close, so it reads the flag through a ref rather than closing over a
+   * state value that would go stale inside the listener.
+   */
+  const pickerOpenRef = useRef(false);
+  useEffect(() => {
+    pickerOpenRef.current = pickerOpen;
+  }, [pickerOpen]);
+
+  /**
+   * Navigating closes the picker — a grouping menu for a level you have left is
+   * a menu about nothing.
+   *
+   * Done at the events that navigate rather than in an effect on `path`: an
+   * effect would set state during a render caused by something else, which is a
+   * cascading render and which the linter is right to flag. The picker can only
+   * be open across a navigation if the user clicks a child chip or a breadcrumb
+   * while it is showing, and both are right here.
+   */
+  const closePicker = () => setPickerOpen(false);
+
+  // Opening puts focus on the current grouping, so the keyboard starts where
+  // the eye does.
+  useEffect(() => {
+    if (pickerOpen) activeDimRef.current?.focus();
+  }, [pickerOpen]);
 
   // Escape backs out: selection first (it is the deepest thing on screen),
   // then one drill level per press. Never steals Escape from a text field or
@@ -60,10 +97,19 @@ function ClusterNav() {
       ) {
         return;
       }
+      // Order: the picker is the shallowest thing on screen and closes first,
+      // then the selection, then a drill level.
+      if (pickerOpenRef.current) {
+        pickerOpenRef.current = false;
+        setPickerOpen(false);
+        triggerRef.current?.focus();
+        return;
+      }
       const state = useApsis.getState();
       if (state.selectedLeadId) {
         state.select(null);
       } else if (useDrill.getState().path.length > 0) {
+        setPickerOpen(false);
         pop();
       }
     };
@@ -71,13 +117,26 @@ function ClusterNav() {
     return () => window.removeEventListener('keydown', onKey);
   }, [pop]);
 
-  // Child clusters under the current path. Throttled — this walks the book.
-  const { children, members } = useMemo(() => {
+  /**
+   * ONE resolution, consumed by the heading, the picker and the child list
+   * alike (D52). Deriving the dimension a second time anywhere below is how
+   * they come to disagree about what they are showing.
+   *
+   * Throttled: this walks the book twice — once to decide which dimensions can
+   * split the cluster, once to count the children of the winner — on the same
+   * ~1s cadence that already drove `clusterChildren`. Never per frame.
+   */
+  const { dim, available, children, members } = useMemo(() => {
     void rev;
-    return clusterChildren(useApsis.getState().leads.values(), path);
-  }, [path, rev]);
+    const leads = useApsis.getState().leads;
+    const resolved = effectiveNextDimension(leads.values(), path, nextDimensionId);
+    const counted = clusterChildren(leads.values(), path, resolved.dimension);
+    return { dim: resolved.dimension, available: resolved.available, ...counted };
+  }, [path, nextDimensionId, rev]);
 
-  const dim = nextDimension(path);
+  // Consumed by the picker in the next step; resolved here so there is exactly
+  // one availability computation.
+  void available;
 
   return (
     <nav className="uv-clusters" aria-label="Cluster drill-down">
@@ -86,22 +145,60 @@ function ClusterNav() {
           {path.length === 0 ? (
             <span aria-current="location">GLOBAL</span>
           ) : (
-            <button type="button" onClick={() => toDepth(0)}>
+            <button
+              type="button"
+              onClick={() => {
+                closePicker();
+                toDepth(0);
+              }}
+            >
               GLOBAL
             </button>
           )}
         </li>
-        {path.map((step, i) => (
-          <li key={`${step.dimensionId}:${step.key}`}>
-            {i === path.length - 1 ? (
-              <span aria-current="location">{stepLabel(step)}</span>
-            ) : (
-              <button type="button" onClick={() => toDepth(i + 1)}>
-                {stepLabel(step)}
-              </button>
-            )}
-          </li>
-        ))}
+        {path.map((step, i) => {
+          /**
+           * Show the dimension only when this step DIVERGES from the default
+           * for its depth. `West › Colorado › Colorado Springs` stays exactly
+           * as it reads today; `Campaign · Open Enrollment` says what it is
+           * precisely where the value alone would be ambiguous.
+           *
+           * The accessible name is unconditional — a screen-reader user never
+           * has to infer the dimension from position.
+           */
+          const diverges = DRILL_SEQUENCE[i]?.id !== step.dimensionId;
+          const dimLabel = DIMENSIONS[step.dimensionId]?.label ?? step.dimensionId;
+          const value = stepLabel(step);
+          const spoken = `${dimLabel}: ${value}`;
+          const shown = diverges ? (
+            <>
+              <span className="uv-crumb-dim">{dimLabel}</span>
+              {value}
+            </>
+          ) : (
+            value
+          );
+          return (
+            <li key={`${step.dimensionId}:${step.key}`}>
+              {i === path.length - 1 ? (
+                <span aria-current="location" aria-label={spoken}>
+                  {shown}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  aria-label={spoken}
+                  onClick={() => {
+                    closePicker();
+                    toDepth(i + 1);
+                  }}
+                >
+                  {shown}
+                </button>
+              )}
+            </li>
+          );
+        })}
       </ol>
 
       <p className="uv-members">
@@ -112,15 +209,61 @@ function ClusterNav() {
       {dim ? (
         <>
           <h3>
-            Drill into {dim.label.toLowerCase()}
+            Drill into{' '}
+            {available.length > 1 ? (
+              <button
+                type="button"
+                ref={triggerRef}
+                className="uv-dim-trigger"
+                aria-expanded={pickerOpen}
+                aria-controls={DIM_LIST_ID}
+                // No alternatives count: announcing one would mean keeping the
+                // availability analysis live purely to voice a number that
+                // moves as the feed lands. The open list is the better answer.
+                aria-label={`Group next by ${dim.label}`}
+                onClick={() => setPickerOpen((open) => !open)}
+              >
+                {dim.label.toLowerCase()}
+                <span aria-hidden="true" className="uv-dim-caret">
+                  ▾
+                </span>
+              </button>
+            ) : (
+              dim.label.toLowerCase()
+            )}
             <span className="uv-child-n">{children.length}</span>
           </h3>
+
+          {pickerOpen && (
+            <ul className="uv-dims" id={DIM_LIST_ID}>
+              {available.map((candidate) => (
+                <li key={candidate.id}>
+                  <button
+                    type="button"
+                    ref={candidate.id === dim.id ? activeDimRef : undefined}
+                    aria-current={candidate.id === dim.id ? 'true' : undefined}
+                    onClick={() => {
+                      // Changes what the NEXT step groups by. It does not
+                      // navigate, does not push a PathStep, and does not move
+                      // a single particle.
+                      chooseNextDimension(candidate.id);
+                      setPickerOpen(false);
+                      triggerRef.current?.focus();
+                    }}
+                  >
+                    {candidate.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           <ul className="uv-children">
             {children.map((c) => (
               <li key={c.key}>
                 <button
                   type="button"
                   onClick={() => {
+                    closePicker();
                     const step: PathStep = { dimensionId: dim.id, key: c.key };
                     push(step);
                     // A new cluster invalidates a selection made outside it.
@@ -134,6 +277,12 @@ function ClusterNav() {
             ))}
           </ul>
         </>
+      ) : members === 0 ? (
+        <p className="uv-hint">
+          This cluster is empty right now. The book is live — ownership,
+          recency and temperature all move — so a path can empty after you
+          chose it. Back out to widen the view.
+        </p>
       ) : (
         <p className="uv-hint">
           Deepest cluster — click a lead in the field, or pick one from the

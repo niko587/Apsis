@@ -813,3 +813,42 @@ assumption. A regression test pins the measured 266 so a change to the book, the
 dimensions or the rules re-opens this decision instead of drifting past it.
 Forbids: repeating the "every full-depth member is listed" claim; weakening the
 truthful count language; adding virtualisation to solve a case search solves.
+
+## D55 — The default next grouping is positional, not relative
+(2026-09-16) Dynamic drill dimensions implemented. `DRILL_SEQUENCE[path.length]`
+is consulted by depth, so after a dynamic first step — `Segment · Medicare` —
+depth 1 still defaults to `state`, not to `region`. The chain does not restart.
+That is intended: the default is a suggestion for a POSITION in the drill, not a
+sequence the user is walked through, and a relative default would mean the same
+depth suggested different things depending on history. It surprises anyone
+writing a test that assumes otherwise, which is why it is written down.
+Resolution may still step past that default when it cannot split (D52), so the
+positional rule never produces a dead level.
+
+## D56 — Assert live shape, measured constants only against the pure book
+(2026-09-16) The enumeration says the largest four-step terminal on
+`seedLeads(4892)` is 266. The running app reported 252 for the same path,
+because it applies decay at boot and leads move between temperature buckets.
+Neither number is wrong; they measure different things.
+So the exact figure lives in the unit regression test against the deterministic
+book, and the browser test asserts the SHAPE — `showing 150 of N`, `N > 150`,
+and that search reaches a member past the cap. A browser assertion on 266 would
+have been an assertion about the clock, and would have failed at some future
+hour for no reason anyone could act on.
+Forbids: asserting a seeded-book constant against the running application.
+
+## D57 — Sample a fixed rectangle of pure field, or prove nothing
+(2026-09-16) "Score is the only thing that moves a lead" is proven by comparing
+rendered pixels under `?anim=off&feed=off` before and after a grouping change.
+Two ways to get that wrong, both encountered: `locator('canvas').screenshot()`
+captures the page REGION, so it includes the drill overlay composited above the
+field — which legitimately changes when the grouping changes. And recomputing
+the sample rectangle per sample is worse, because the overlay grows when the
+picker opens, moving the rectangle itself and producing a difference that says
+nothing about leads.
+The test measures ONE rectangle of pure field — below any overlay height, clear
+of the command bar and the bottom-left readout — reuses it verbatim, and takes
+a baseline stability sample first so that a difference is evidence rather than
+noise.
+Forbids: screenshot comparisons over regions containing chrome that varies with
+the thing under test; recomputing a comparison region between samples.

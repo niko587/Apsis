@@ -563,14 +563,18 @@ policy prevents.
 ## S. Files allowed to change
 
 - `src/universe/clusters.ts` — `MAX_DRILL_DEPTH`, `availableDimensions`,
-  `nextDimension(path, selectedId?)`
+  `effectiveNextDimension(leads, path, selectedId)` (§I). The old
+  `nextDimension(path)` is REMOVED, not kept alongside: two decision paths is
+  exactly how the heading and the child list come to disagree.
 - `src/state/drillStore.ts` — `nextDimensionId`, `chooseNextDimension`, the
   depth cap constant
 - `src/universe/UniverseOverlay.tsx` — the picker, breadcrumb labelling, empty
   state, Escape ordering
 - `src/universe/SelectedLeadFocus.tsx` — **constant swap only**
 - `src/universe/CameraRig.tsx` — **constant swap only**
-- `src/App.css` — additive rules for the picker
+- `src/universe/overlay.css` — additive rules for the picker. (§S originally
+  said `src/App.css`; the overlay has owned its own stylesheet since §15, and
+  that is where `.uv-clusters` and `.uv-children` already live.)
 - new test files; `src/universe/dimensions.test.ts` may grow
 
 ## T. Files forbidden to change
@@ -824,3 +828,34 @@ optional visual pass with the tests already standing.
 >
 > Do not reopen the rendering investigation, and do not begin any later
 > milestone.
+
+
+---
+
+## Implementation notes (2026-09-16)
+
+Implemented per §Y. Three things the contract did not anticipate, recorded
+because they will be re-encountered:
+
+**The positional default survives a dynamic first step.** After
+`Segment · Medicare`, depth 1 still defaults to `state` — `DRILL_SEQUENCE[1]` —
+not to `region`. That is correct and intended: the default is positional, not
+relative to what came before. It surprises anyone writing a test that assumes a
+dynamic path restarts the chain.
+
+**The live app's cluster sizes are not the pure book's.** The browser reported
+`showing 150 of 252` where the enumeration of the seeded book says 266, because
+the running app applies decay at boot and leads move between temperature
+buckets. So the exact figure is asserted **only** in the unit regression test
+against `seedLeads(4892)`; the browser test asserts the SHAPE — `showing 150 of
+N` with `N > 150` — because asserting a live constant would be asserting the
+clock.
+
+**Proving "score is the only thing that moves a lead" needed a fixed clip.**
+`locator('canvas').screenshot()` captures the page region, which includes the
+overlay composited above the field — and the overlay legitimately changes when
+the grouping changes. Recomputing the rectangle per sample was worse still: the
+overlay grows when the picker opens, so the rectangle itself moved. The test now
+measures one rectangle of pure field, below any overlay height and clear of the
+command bar, and reuses it verbatim — with a baseline stability check first, so
+that a difference means something.

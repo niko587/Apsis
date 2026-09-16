@@ -14,10 +14,21 @@
  */
 
 import { create } from 'zustand';
-import { DRILL_SEQUENCE, type PathStep } from '../universe/clusters';
+import { MAX_DRILL_DEPTH, type PathStep } from '../universe/clusters';
 
 interface DrillState {
   path: readonly PathStep[];
+  /**
+   * What the user asked the NEXT level to group by, or null for the default.
+   *
+   * Navigation state, not history — `path` remains the record of what was
+   * actually selected. It lives here rather than in the overlay because every
+   * navigation must clear it (a dimension picked for depth 2 is meaningless at
+   * depth 1) and `pop`/`toDepth` are store actions; component state would need
+   * an effect watching `path`, which is the same value in two places with the
+   * usual reward of a stale one after a breadcrumb jump.
+   */
+  nextDimensionId: string | null;
   /** Drill one level deeper. Ignored if already at full depth. */
   push: (step: PathStep) => void;
   /** Back out one level. */
@@ -26,18 +37,37 @@ interface DrillState {
   reset: () => void;
   /** Jump to a breadcrumb: keep the first `depth` steps. */
   toDepth: (depth: number) => void;
+  /** Choose the next grouping. NEVER touches `path`. */
+  chooseNextDimension: (id: string | null) => void;
 }
 
 export const useDrill = create<DrillState>((set) => ({
   path: [],
+  nextDimensionId: null,
   push: (step) =>
     set((s) =>
-      s.path.length >= DRILL_SEQUENCE.length ? s : { path: [...s.path, step] },
+      s.path.length >= MAX_DRILL_DEPTH
+        ? s
+        : { path: [...s.path, step], nextDimensionId: null },
     ),
-  pop: () => set((s) => (s.path.length === 0 ? s : { path: s.path.slice(0, -1) })),
-  reset: () => set((s) => (s.path.length === 0 ? s : { path: [] })),
+  pop: () =>
+    set((s) =>
+      s.path.length === 0 ? s : { path: s.path.slice(0, -1), nextDimensionId: null },
+    ),
+  reset: () =>
+    set((s) =>
+      s.path.length === 0 && s.nextDimensionId === null
+        ? s
+        : { path: [], nextDimensionId: null },
+    ),
   toDepth: (depth) =>
-    set((s) => (depth >= s.path.length ? s : { path: s.path.slice(0, depth) })),
+    set((s) =>
+      depth >= s.path.length
+        ? s
+        : { path: s.path.slice(0, depth), nextDimensionId: null },
+    ),
+  chooseNextDimension: (id) =>
+    set((s) => (s.nextDimensionId === id ? s : { nextDimensionId: id })),
 }));
 
 /** Non-reactive read for frame loops — same pattern as `readLeads` et al. */
