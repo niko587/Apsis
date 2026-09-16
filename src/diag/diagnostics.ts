@@ -83,7 +83,10 @@ export const DIAG_ACTIVE =
   (typeof window !== 'undefined' &&
     (() => {
       const q = new URLSearchParams(window.location.search);
-      return q.get('probe') === '1' || q.get('jank') === '1' || q.has('sweep') || q.get('drag') === '1';
+      return (
+        q.get('probe') === '1' || q.get('jank') === '1' || q.has('sweep') ||
+        q.get('drag') === '1' || q.get('matrix') === '1'
+      );
     })());
 
 export interface Sample {
@@ -191,6 +194,12 @@ export function installRenderProbe(gl: THREE.WebGLRenderer): void {
   let last = performance.now();
   const tick = (scheduled?: number) => {
     const now = performance.now();
+    // Capture the interval and the frame's start BEFORE `last` is reassigned:
+    // computing it afterwards yields zero, which silently emptied every
+    // bad-frame bucket in the round-6 correlation while the distribution
+    // (fed separately) looked correct.
+    const frameStart = last;
+    const dt = now - last;
     if (scheduled !== undefined) noteRafLateness(scheduled);
 
     if (typeof ctx.fenceSync === 'function') {
@@ -219,6 +228,7 @@ export function installRenderProbe(gl: THREE.WebGLRenderer): void {
       lastPoints = pointsAccum;
       lastTris = trisAccum;
     }
+    closeFrame(frameStart, now, dt, callsAccum);
     callsAccum = pointsAccum = trisAccum = 0;
 
     if (ext && ctx) {
@@ -415,11 +425,19 @@ export const PROBE =
     const q = new URLSearchParams(window.location.search);
     // `sweep` accepts a value (`1` or `drag`), so presence is what counts —
     // testing for '1' silently dropped `?sweep=drag` on the floor.
-    return q.get('probe') === '1' || q.get('jank') === '1' || q.has('sweep') || q.get('drag') === '1';
+    return (
+      q.get('probe') === '1' || q.get('jank') === '1' || q.has('sweep') ||
+      q.get('drag') === '1' || q.get('matrix') === '1'
+    );
   })();
 
 export const SWEEP =
   typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('sweep');
+
+/** `?matrix=1` drives its own drag sweep, so it must not require `?sweep`. */
+export const MATRIX_MODE =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('matrix') === '1';
 
 export interface SpanStat {
   count: number;
@@ -446,6 +464,9 @@ let logging = false;
 
 /** Record one occurrence of a named span. Call sites are guarded by PROBE. */
 export function span(name: string, ms: number): void {
+  // Round 6: also attribute this span to the frame currently in flight, so a
+  // bad frame can be explained rather than just counted.
+  noteFrameSpan(name, ms);
   const s = spans.get(name);
   if (s) {
     s.count++;
@@ -478,6 +499,10 @@ export function installLongTaskObserver(): void {
         longTasks.count++;
         longTasks.totalMs += entry.duration;
         if (entry.duration > longTasks.maxMs) longTasks.maxMs = entry.duration;
+        // Kept as a window so a long task can be attributed to the frame it
+        // actually landed in, rather than only counted in an aggregate.
+        longTaskWindows.push({ start: entry.startTime, end: entry.startTime + entry.duration });
+        if (longTaskWindows.length > 400) longTaskWindows.shift();
       }
     });
     obs.observe({ entryTypes: ['longtask'] });
@@ -919,6 +944,7 @@ export function noteRafLateness(scheduled: number): void {
 
 export function noteGpuFence(ms: number): void {
   gpuFence.push(ms);
+  lastFenceMs = ms;
 }
 
 export function noteInputToSubmit(ms: number): void {
@@ -988,4 +1014,335 @@ export function applyBackdropFlag(): void {
   style.setAttribute('data-diag', 'true');
   style.textContent = rules.join('\n');
   document.head.appendChild(style);
+}
+
+/* ------------------------------------------ round 6: matrix + correlation --- */
+
+/**
+ * Round 6 decomposes the REMAINING workload after round 5 established that
+ * backdrop-filter is a real but partial contributor.
+ *
+ * Two things from the owner's round-5 data shape this design:
+ *
+ * 1. **Aggregate means mislead here.** Chrome measured numerically worse than
+ *    Safari (p99 78.8 vs 61.0 ms) while the owner judged them the same. Means
+ *    and even p95 cannot separate "GPU is behind" from "main thread stalled",
+ *    so this round records EVERY frame with what co-occurred inside it.
+ * 2. **The tail is the symptom.** 5.5% of Safari frames and 9.6% of Chrome
+ *    frames exceeded 33 ms. Those frames are the felt lag; the other 90% are
+ *    already fine and optimising them would change nothing.
+ *
+ * So the unit of measurement is the individual bad frame, and the question for
+ * each one is: was the GPU behind, was the main thread busy, or both?
+ */
+
+interface FrameRecord {
+  /** Frame interval in ms. */
+  ms: number;
+  /** `leadFieldFrame` span recorded inside this frame. */
+  lead: number;
+  /** `revisionWalk` span inside this frame — 0 when the walk did not run. */
+  walk: number;
+  /** `pointsRaycast` inside this frame. */
+  ray: number;
+  /** Most recent resolved GPU fence latency at the time this frame closed. */
+  gpu: number;
+  /** Milliseconds of long-task time overlapping this frame's window. */
+  lt: number;
+  /** Draw calls submitted during this frame. */
+  calls: number;
+}
+
+const frameRecords: FrameRecord[] = [];
+let curLead = 0;
+let curWalk = 0;
+let curRay = 0;
+let lastFenceMs = 0;
+/** Long tasks as (start, duration) so they can be attributed to a frame window. */
+const longTaskWindows: Array<{ start: number; end: number }> = [];
+
+export function noteFrameSpan(name: string, ms: number): void {
+  if (name === 'leadFieldFrame') curLead += ms;
+  else if (name === 'revisionWalk') curWalk += ms;
+  else if (name === 'pointsRaycast') curRay += ms;
+}
+
+function closeFrame(frameStart: number, frameEnd: number, ms: number, calls: number): void {
+  if (!logging) {
+    curLead = curWalk = curRay = 0;
+    return;
+  }
+  let lt = 0;
+  for (const w of longTaskWindows) {
+    const overlap = Math.min(w.end, frameEnd) - Math.max(w.start, frameStart);
+    if (overlap > 0) lt += overlap;
+  }
+  frameRecords.push({ ms, lead: curLead, walk: curWalk, ray: curRay, gpu: lastFenceMs, lt, calls });
+  curLead = curWalk = curRay = 0;
+}
+
+/**
+ * Bad-frame correlation.
+ *
+ * For each threshold, reports what the frames above it had in common, against
+ * the healthy frames as a control. The comparison is the point: a raised GPU
+ * fence with a flat main thread means the GPU was behind; raised `walk`/`lead`
+ * or overlapping long tasks mean the main thread was. Both raised means both.
+ */
+export function correlate(threshold: number) {
+  const bad = frameRecords.filter((f) => f.ms > threshold);
+  const good = frameRecords.filter((f) => f.ms <= 20);
+  const avg = (a: FrameRecord[], k: keyof FrameRecord) =>
+    a.length ? a.reduce((p, c) => p + (c[k] as number), 0) / a.length : 0;
+  return {
+    threshold,
+    count: bad.length,
+    share: frameRecords.length ? (bad.length / frameRecords.length) * 100 : 0,
+    badFrameMs: avg(bad, 'ms'),
+    badGpu: avg(bad, 'gpu'),
+    goodGpu: avg(good, 'gpu'),
+    badLead: avg(bad, 'lead'),
+    goodLead: avg(good, 'lead'),
+    badWalk: avg(bad, 'walk'),
+    goodWalk: avg(good, 'walk'),
+    /** Share of bad frames in which the full-book revision walk actually ran. */
+    walkActivePct: bad.length ? (bad.filter((f) => f.walk > 0).length / bad.length) * 100 : 0,
+    /** Share of bad frames overlapping a browser-reported long task. */
+    longTaskPct: bad.length ? (bad.filter((f) => f.lt > 0).length / bad.length) * 100 : 0,
+    badLongTaskMs: avg(bad, 'lt'),
+  };
+}
+
+export function resetFrameRecords(): void {
+  frameRecords.length = 0;
+  longTaskWindows.length = 0;
+  curLead = curWalk = curRay = 0;
+}
+
+export function frameRecordCount(): number {
+  return frameRecords.length;
+}
+
+/* ---------------------------------------------------------- matrix runner --- */
+
+export interface MatrixCase {
+  label: string;
+  query: string;
+  isolates: string;
+}
+
+/**
+ * Ten cases. Each differs from BASELINE by exactly one axis, plus four
+ * combinations that test whether the axes are additive or interacting.
+ * Deliberately not larger: every extra case costs the owner ~11 s and dilutes
+ * attention, and these already cover the candidates round 5 left open.
+ */
+export const MATRIX: readonly MatrixCase[] = [
+  { label: 'baseline', query: '', isolates: 'shipping configuration — the control' },
+  { label: 'backdrop=off', query: 'backdrop=off', isolates: 'the four backdrop-filter blurs over the canvas' },
+  { label: 'dpr=1', query: 'dpr=1', isolates: 'pixel count — ~4x fewer fragments at the same CSS size' },
+  { label: 'fx=off', query: 'fx=off', isolates: 'bloom + ACES composer (half-float, 5 mip levels)' },
+  { label: 'core=off', query: 'core=off', isolates: 'the raymarched Intelligence Core fragment shader' },
+  { label: 'field=off', query: 'field=off', isolates: 'additive sprite overdraw for 4,892 leads' },
+  { label: 'dpr=1 fx=off', query: 'dpr=1&fx=off', isolates: 'whether post cost is mostly pixel-count driven' },
+  { label: 'dpr=1 backdrop=off', query: 'dpr=1&backdrop=off', isolates: 'whether blur cost is mostly pixel-count driven' },
+  { label: 'fx=off backdrop=off', query: 'fx=off&backdrop=off', isolates: 'the two known contributors together' },
+  { label: 'dpr=1 fx=off backdrop=off', query: 'dpr=1&fx=off&backdrop=off', isolates: 'floor: all three removed' },
+];
+
+const MKEY = 'apsis.matrix';
+const M_SETTLE_MS = 3000;
+const M_SAMPLE_MS = 8000;
+
+interface MatrixRow {
+  label: string;
+  isolates: string;
+  d: Distribution;
+  gpu: { median: number; p95: number; max: number; n: number };
+  longTasks: { count: number; totalMs: number; maxMs: number } | null;
+  spans: Record<string, { mean: number; max: number; count: number }>;
+  draw: { calls: number; points: number; triangles: number; lines: number };
+  env: {
+    dpr: number;
+    css: string;
+    buffer: string;
+    build: string;
+    backdrop: boolean;
+    overlays: boolean;
+    leads: number;
+  };
+  corr33: ReturnType<typeof correlate>;
+  corr50: ReturnType<typeof correlate>;
+}
+
+/**
+ * `?matrix=1` — run all ten cases with the identical scripted drag, one case
+ * per page load, then print a single report.
+ *
+ * Navigation rather than live toggling because DPR and the post pipeline are
+ * fixed when the canvas is created; remounting the renderer mid-run would
+ * measure the remount.
+ */
+export function runMatrixIfRequested(): void {
+  if (typeof window === 'undefined') return;
+  const q = new URLSearchParams(window.location.search);
+  if (q.get('matrix') !== '1') return;
+
+  const step = Number.parseInt(q.get('matrixStep') ?? '0', 10) || 0;
+  const leads = q.get('leads') ?? '';
+  installLongTaskObserver();
+  installEventTimingObserver();
+
+  window.setTimeout(() => {
+    startJankLog();
+    resetPresentation();
+    resetFrameRecords();
+    runDragSweep(M_SAMPLE_MS).then(() => {
+      const rows: MatrixRow[] = JSON.parse(sessionStorage.getItem(MKEY) ?? '[]');
+      const c = MATRIX[step];
+      const pr = presentation();
+      const s = readSample();
+      const gl = probedRenderer?.getContext() as WebGL2RenderingContext | undefined;
+      const spanMap: Record<string, { mean: number; max: number; count: number }> = {};
+      for (const e of jankReport(M_SAMPLE_MS / 1000).spans) {
+        spanMap[e.name] = { mean: e.meanMs, max: e.maxMs, count: e.count };
+      }
+      rows.push({
+        label: c.label,
+        isolates: c.isolates,
+        d: distribution(),
+        gpu: { median: pr.gpuFence.median, p95: pr.gpuFence.p95, max: pr.gpuFence.max, n: pr.gpuFence.n },
+        longTasks: longTaskSupported ? { ...longTasks } : null,
+        spans: spanMap,
+        draw: { calls: s.drawCalls, points: s.points, triangles: s.triangles, lines: 0 },
+        env: {
+          dpr: window.devicePixelRatio,
+          css: `${window.innerWidth}x${window.innerHeight}`,
+          buffer: gl ? `${gl.drawingBufferWidth}x${gl.drawingBufferHeight}` : 'unknown',
+          build: import.meta.env.DEV ? 'development' : 'production',
+          backdrop: !document.documentElement.classList.contains('diag-no-backdrop'),
+          overlays: !document.documentElement.classList.contains('diag-no-overlay'),
+          leads: useLeadCount(),
+        },
+        corr33: correlate(33),
+        corr50: correlate(50),
+      });
+      sessionStorage.setItem(MKEY, JSON.stringify(rows));
+
+      const next = step + 1;
+      if (next < MATRIX.length) {
+        const nq = new URLSearchParams(MATRIX[next].query);
+        nq.set('matrix', '1');
+        nq.set('matrixStep', String(next));
+        if (leads) nq.set('leads', leads);
+        window.location.search = `?${nq.toString()}`;
+      } else {
+        sessionStorage.removeItem(MKEY);
+        renderMatrixReport(rows);
+      }
+    });
+  }, M_SETTLE_MS);
+}
+
+/** Book size, read without importing the store (keeps this module standalone). */
+function useLeadCount(): number {
+  const raw = new URLSearchParams(window.location.search).get('leads');
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 4892;
+}
+
+function renderMatrixReport(rows: MatrixRow[]): void {
+  const L: string[] = [];
+  const e0 = rows[0]?.env;
+  L.push('APSIS ROUND 6 MATRIX');
+  L.push(
+    `build=${e0?.build} leads=${e0?.leads} dpr=${e0?.dpr} css=${e0?.css} buffer=${e0?.buffer}`,
+  );
+  L.push(`ua=${navigator.userAgent}`);
+  const c = readCapabilities(probedRenderer ?? undefined);
+  L.push(
+    `caps: longtask=${c.longtask ? 'yes' : 'NO'} eventTiming=${c.eventTiming ? 'yes' : 'NO'} ` +
+      `gpuTimerQuery=${c.timerQuery ? 'yes' : 'NO'} fenceSync=${c.fenceSync ? 'yes' : 'NO'}`,
+  );
+  L.push(`gl renderer: ${c.webglRenderer}`);
+  L.push('');
+  L.push('FRAME TIME (ms) — identical scripted drag, 8s per case');
+  L.push('case                        mean  med   p95   p99   max   >20  >33  >50 >100  %>33');
+  for (const r of rows) {
+    const d = r.d;
+    L.push(
+      `${r.label.padEnd(26)} ${d.mean.toFixed(1).padStart(5)} ${d.median.toFixed(0).padStart(4)} ` +
+        `${d.p95.toFixed(0).padStart(5)} ${d.p99.toFixed(0).padStart(5)} ${d.max.toFixed(0).padStart(5)} ` +
+        `${String(d.over20).padStart(5)}${String(d.over33).padStart(5)}${String(d.over50).padStart(5)}` +
+        `${String(d.over100).padStart(5)} ${(d.frames ? (d.over33 / d.frames) * 100 : 0).toFixed(1).padStart(5)}`,
+    );
+  }
+  L.push('');
+  L.push('GPU FENCE (ms, proxy for GPU completion) + DRAW + BUFFER');
+  L.push('case                        med   p95   max   calls   points   buffer');
+  for (const r of rows) {
+    L.push(
+      `${r.label.padEnd(26)} ${r.gpu.median.toFixed(0).padStart(4)} ${r.gpu.p95.toFixed(0).padStart(5)} ` +
+        `${r.gpu.max.toFixed(0).padStart(5)} ${String(r.draw.calls).padStart(7)} ` +
+        `${String(r.draw.points).padStart(8)}   ${r.env.buffer}`,
+    );
+  }
+  L.push('');
+  L.push('CODE PATHS (ms mean / max)');
+  L.push('case                        leadFrame      revWalk       raycast       ingest');
+  for (const r of rows) {
+    const g = (n: string) => {
+      const s = r.spans[n];
+      return s ? `${s.mean.toFixed(2)}/${s.max.toFixed(1)}` : '—';
+    };
+    L.push(
+      `${r.label.padEnd(26)} ${g('leadFieldFrame').padStart(12)} ${g('revisionWalk').padStart(12)} ` +
+        `${g('pointsRaycast').padStart(12)} ${g('ingest').padStart(12)}`,
+    );
+  }
+  L.push('');
+  L.push('BAD-FRAME CORRELATION — what co-occurred inside frames >33ms');
+  L.push('(control = frames <=20ms. GPU up + main flat => GPU-bound; the reverse => main-thread)');
+  L.push('case                        n  %frm  badMs   gpu(bad/good)   lead(bad/good)  walk% lt%');
+  for (const r of rows) {
+    const k = r.corr33;
+    const gpuPair = `${k.badGpu.toFixed(1)}/${k.goodGpu.toFixed(1)}`;
+    const leadPair = `${k.badLead.toFixed(2)}/${k.goodLead.toFixed(2)}`;
+    L.push(
+      `${r.label.padEnd(26)} ${String(k.count).padStart(3)} ${k.share.toFixed(1).padStart(5)} ` +
+        `${k.badFrameMs.toFixed(0).padStart(6)} ${gpuPair.padStart(15)} ${leadPair.padStart(15)} ` +
+        `${k.walkActivePct.toFixed(0).padStart(4)} ${k.longTaskPct.toFixed(0).padStart(3)}`,
+    );
+  }
+  L.push('');
+  L.push('LONG TASKS per case (Chrome only; Safari cannot observe them)');
+  for (const r of rows) {
+    L.push(
+      `  ${r.label.padEnd(26)} ` +
+        (r.longTasks === null
+          ? 'UNSUPPORTED — not zero, unobservable'
+          : `count=${r.longTasks.count} total=${r.longTasks.totalMs.toFixed(0)}ms max=${r.longTasks.maxMs.toFixed(0)}ms`),
+    );
+  }
+  L.push('');
+  L.push('WHAT EACH CASE ISOLATES');
+  for (const r of rows) L.push(`  ${r.label.padEnd(26)} ${r.isolates}`);
+
+  const text = L.join('\n');
+  const el = document.createElement('div');
+  el.setAttribute('data-matrix-report', '');
+  el.style.cssText =
+    'position:fixed;inset:0;z-index:99999;background:#05050d;color:#e6e9f6;overflow:auto;' +
+    'padding:22px;font:11.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace';
+  const pre = document.createElement('pre');
+  pre.textContent = text;
+  pre.style.cssText = 'margin:0 0 14px;white-space:pre';
+  const ta = document.createElement('textarea');
+  ta.readOnly = true;
+  ta.value = text;
+  ta.style.cssText =
+    'width:100%;height:260px;background:#0e1020;color:#e6e9f6;border:1px solid rgba(122,138,190,.3);' +
+    'border-radius:8px;padding:10px;font:inherit';
+  el.append(pre, ta);
+  document.body.appendChild(el);
 }

@@ -872,3 +872,164 @@ the subjective smoothness of dragging in each.
 No bottleneck confirmed. One strong, untested hypothesis with a one-minute
 decisive test. Nothing optimized, no visuals altered, no feature removed, the
 4,892-lead book and the Core intact.
+
+---
+
+# Round 6: controlled matrix and bad-frame correlation
+
+_2026-09-15. Diagnostic harness only. No optimization, no visual change, no
+product code touched._
+
+## What round 5 settled, and what it left
+
+- **backdrop-filter is a real contributor.** Owner's Safari A/B: removing it is
+  a *noticeable* improvement — but significant lag remains. It is a
+  contributor, not the cause.
+- **Safari ≈ Chrome subjectively.** The owner compared carefully and corrected
+  an initial impression: there is little or no meaningful difference. Recorded
+  as-is. This materially weakens any Safari/WebKit-specific explanation.
+
+Chrome measured *numerically* worse than Safari (p99 78.8 vs 61.0 ms, 9.6% vs
+5.5% of frames over 33 ms) while feeling the same. **That is the round's most
+important methodological fact: aggregate statistics are not tracking the
+owner's experience.** Note also that every Chrome span rose by roughly the same
+factor — `revisionWalk` 2.41→7.72 ms, `leadFieldFrame` 0.348→1.233,
+`pointsRaycast` 0.076→0.263. Everything scaling together is the signature of a
+different sampling environment, **not** of one path turning pathological, so
+`revisionWalk` is explicitly *not* concluded to be the Chrome culprit.
+
+## A. The matrix implemented (`?matrix=1`)
+
+Ten cases, each differing from baseline by one axis plus four combinations,
+run back-to-back with an identical 8 s scripted drag after a 3 s settle:
+
+| case | isolates |
+|---|---|
+| `baseline` | shipping configuration — the control |
+| `backdrop=off` | the four backdrop-filter blurs over the canvas |
+| `dpr=1` | pixel count — ~4× fewer fragments at the same CSS size |
+| `fx=off` | bloom + ACES composer (half-float, 5 mip levels) |
+| `core=off` | the raymarched Intelligence Core fragment shader |
+| `field=off` | additive sprite overdraw for 4,892 leads |
+| `dpr=1 fx=off` | whether post cost is mostly pixel-count driven |
+| `dpr=1 backdrop=off` | whether blur cost is mostly pixel-count driven |
+| `fx=off backdrop=off` | the two known contributors together |
+| `dpr=1 fx=off backdrop=off` | floor: all three removed |
+
+Deliberately not larger — each case costs the owner ~11 s, and these cover
+every candidate round 5 left open without diluting attention.
+
+## C. Metrics captured per case
+
+Frame time mean/median/p95/p99/max and counts over 20/33/50/100 ms; **GPU fence
+latency** (median/p95/max) from a polled WebGL2 `fenceSync`; long tasks
+(count/total/max, Chrome only); code-path spans (`leadFieldFrame`,
+`revisionWalk`, `pointsRaycast`, `ingest`, mean and max); `renderer.info`
+draw calls / points / triangles; and the environment — CSS viewport, **actual
+drawing-buffer dimensions**, DPR, build mode, browser UA, active toggles, lead
+count.
+
+## D. Bad-frame correlation — the method
+
+Every frame is stored as a record: its duration, the `leadFieldFrame`,
+`revisionWalk` and `pointsRaycast` spans that ran **inside that frame**, the
+most recent resolved GPU fence, overlapping long-task milliseconds, and draw
+calls. Long tasks are kept as `(start, end)` windows so they can be attributed
+to the frame they actually landed in.
+
+Frames over 33 ms and over 50 ms are then compared against frames ≤20 ms as a
+control:
+
+- **GPU fence raised, main thread flat → GPU-bound bad frame.**
+- **Spans/long tasks raised, fence flat → main-thread bad frame.**
+- **Both raised → both**, and the fix has to address both.
+
+`walk%` reports how often the full-book revision walk was *actually running*
+during a bad frame — which distinguishes "expensive on average" from
+"implicated in the stalls".
+
+## E. Browser/API limitations (probed, never assumed)
+
+- `EXT_disjoint_timer_query_webgl2`: **not exposed by WebKit**, and withheld by
+  Chrome here too. There is no true GPU timing; the fence is a *proxy* for GPU
+  completion, not a presentation timestamp.
+- `longtask`: **Safari cannot observe it.** The report prints
+  "UNSUPPORTED — not zero, unobservable" and never `count=0`.
+- **True presentation time remains unobservable from JS.** Compositing —
+  including backdrop-filter evaluation — happens after rAF returns.
+- **Probe overhead is disclosed**: the harness polls one fence and appends one
+  record per frame, and dispatches synthetic pointer events during the drag.
+  Where a long task cannot be attributed from browser APIs, the report says so
+  rather than guessing.
+
+## Validation of the harness itself (two bugs caught before shipping)
+
+1. **The correlation was dead.** Frame duration was computed *after* `last` was
+   reassigned, so every record stored `ms = 0`, every frame fell into the
+   "healthy" bucket, and all ten bad-frame rows reported `n = 0` — while the
+   distribution table, fed by a separate path, looked perfectly correct. Fixed
+   and re-validated: the last two cases now show bad frames at GPU fence 55 ms
+   against a 19 ms healthy control, which is the contrast the method depends on.
+2. **`?dpr=1` could not be verified locally** (this machine is already DPR 1).
+   Checked at a simulated Retina scale factor: the drawing buffer goes
+   **1600×552 → 800×276**, exactly the 4× fragment reduction intended. Had that
+   flag been a no-op, the most valuable case in the matrix would have quietly
+   reported "DPR doesn't matter".
+
+Also confirmed mechanically: `field=off` reports `points=0`, `core=off` drops
+draw calls 41→36, long tasks are captured per case, and all ten cases walk end
+to end through `sessionStorage` without truncation.
+
+**Numbers from the measuring machine remain meaningless** (software rasterizer
+plus contention — `backdrop=off` came out 12× "slower" than baseline, which is
+noise). Only the mechanics were being validated.
+
+## F. Normal Apsis is unchanged
+
+Verified: `src/App.css`, `src/universe/overlay.css`, `src/universe/Core.tsx`,
+`src/domain/**` and `src/state/**` are byte-identical to `origin/main` for the
+rendering path. Every flag defaults to on; a default page load renders the same
+9 rail panels, 150 rows, live feed and full 3D scene with no overlay. The
+4,892-lead book, the Intelligence Core, bloom, transparency, DPR 2, the
+overlays and demand-free continuous rendering are all exactly as they shipped.
+
+## G. The one command for the owner
+
+```
+npm run build && npm run preview -- --port 4173
+```
+then, in **Safari**, one URL — it drives itself for about two minutes:
+```
+http://localhost:4173/?matrix=1
+```
+Do not touch the mouse while it runs; it dispatches its own scripted drag.
+It navigates ten times and ends on a report with a copyable textarea.
+
+## H. How to read the result
+
+The ranking is whichever case moves **p99 / >33 ms count / GPU fence p95** most
+against baseline — not the mean.
+
+- **`dpr=1` dominates** → fill rate. Later fix: adaptive resolution that drops
+  DPR only while interacting. Visual quality preserved at rest.
+- **`fx=off` dominates and `dpr=1 fx=off` ≈ `fx=off`** → bloom cost is not
+  mainly pixel-count driven; tune the composer. If instead `dpr=1 fx=off` is
+  far better than either alone, the two multiply and resolution is the lever.
+- **`core=off` dominates** → optimise the raymarch (step count, or render the
+  Core to a smaller buffer) while preserving its look.
+- **`field=off` dominates** → additive overdraw; fix fragment cost per sprite,
+  **not** the number of leads.
+- **Correlation shows GPU fence raised in bad frames, spans flat** → GPU-bound;
+  ignore the JavaScript entirely.
+- **Correlation shows spans/long tasks raised, fence flat** → main-thread; the
+  revision walk finally becomes worth fixing.
+- **Nothing dominates and the floor case is still bad** → the remaining cost is
+  presentation/compositor beyond backdrop-filter, and the next instrument is
+  Safari Web Inspector → Timelines → Rendering Frames, plus macOS Instruments
+  (Metal System Trace). JS will have been exhausted.
+
+## Status
+
+No bottleneck confirmed. No optimization chosen. One contributor established
+(backdrop-filter, partial), one hypothesis retired (Safari-specific), and a
+harness that can rank the rest on the owner's real hardware in two minutes.

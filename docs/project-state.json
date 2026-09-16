@@ -86,7 +86,7 @@
     "never rewrite published history on main without owner instruction (D19)"
   ],
   "blocked": [
-    { "what": "Safari ?backdrop=off A/B (decisive, ~1min) + Safari-vs-Chrome ?sweep=drag", "on": "owner's hardware (2020 M1 MacBook Air, Safari, dpr 2)", "ref": "NEXT_ACTIONS.md#1" }
+    { "what": "Run ?matrix=1 in Safari (~2min, one URL, self-driving) to rank the remaining contributors", "on": "owner's hardware (2020 M1 MacBook Air, Safari, dpr 2)", "ref": "NEXT_ACTIONS.md#1" }
   ],
   "performance": {
     "baseline": "docs/PERFORMANCE_BASELINE.md (2026-09-15)",
@@ -115,7 +115,12 @@
       "the jank report header does not record build mode (dev vs production), so two pasted reports are indistinguishable without manual labelling"
     ],
     "round5": "owner is on SAFARI; dev == production subjectively, retiring the build-mode hypothesis. Enumerated the full graphics/compositor stack and found FOUR backdrop-filter:blur() elements layered directly over the live WebGL canvas (.command-row and .command-out at 14px, .uv-clusters and .uv-skills at 6px)",
-    "leading_hypothesis": "CSS backdrop-filter compositing over the WebGL canvas — work that happens AFTER requestAnimationFrame returns and is invisible to every instrument here. First hypothesis consistent with ALL evidence: JS cheap, frame intervals perfect, fx=off partial, field=off/core=off making no difference (a backdrop blur costs the same regardless of what is behind it), dev==prod, Safari-specific severity. UNTESTED — ?backdrop=off decides it in ~1 minute",
+    "round6": "backdrop-filter CONFIRMED as a real but PARTIAL contributor (owner A/B: noticeable improvement, significant lag remains). Safari ~= Chrome subjectively on careful re-comparison, retiring the WebKit-specific hypothesis. Chrome measured numerically worse while feeling the same, and ALL spans scaled together (~3x), so revisionWalk is explicitly not concluded to be the cause. Shipped ?matrix=1: ten cases, one axis each, identical 8s scripted drag, plus per-frame bad-frame correlation (GPU fence vs spans vs long tasks) to classify GPU-bound vs main-thread stalls",
+    "round6_harness_bugs_caught": [
+      "correlation records stored ms=0 because frame duration was computed after `last` was reassigned — every bad-frame bucket was silently empty while the distribution table looked correct. Fixed and re-validated.",
+      "?dpr=1 was unverifiable locally (machine is already DPR 1); checked at simulated Retina, drawing buffer 1600x552 -> 800x276 as intended"
+    ],
+    "superseded_hypothesis": "CSS backdrop-filter compositing over the WebGL canvas — work that happens AFTER requestAnimationFrame returns and is invisible to every instrument here. First hypothesis consistent with ALL evidence: JS cheap, frame intervals perfect, fx=off partial, field=off/core=off making no difference (a backdrop blur costs the same regardless of what is behind it), dev==prod, Safari-specific severity. UNTESTED — ?backdrop=off decides it in ~1 minute",
     "not_observable_from_js": "true presentation time (pixels on glass) in Safari: no frame-timing API, no long-animation-frame, no EXT_disjoint_timer_query_webgl2. GL execution, WebKit compositing, backdrop-filter evaluation and the vsync handoff are all invisible. Best proxies added: polled WebGL2 fenceSync, rAF lateness, input->handler latency",
     "diagnostic_fixes_round5": [
       "longtask false negative FIXED — Safari now prints 'LONGTASK OBSERVER UNSUPPORTED', never 'count=0'",

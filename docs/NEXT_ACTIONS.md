@@ -22,37 +22,39 @@ The owner reports subjective grade **D** on a 2020 M1 MacBook Air. That is now
 the project's top priority. Round 1's hypothesis was refuted by real hardware;
 item 1 is the ~90-second run that ranks what is left.
 
-## 1. Safari `?backdrop=off` A/B — BLOCKED on owner, ~1 minute, decisive
-**What:** rebuild (`npm run build`), then in **Safari**, drag the Lead Universe
-for ~20s in each and judge by feel:
+## 1. Run `?matrix=1` in Safari — BLOCKED on owner, ~2 minutes, one URL
+**What:**
 ```
-http://localhost:4173/                 # baseline
-http://localhost:4173/?backdrop=off    # identical, minus four backdrop blurs
+npm run build && npm run preview -- --port 4173
+http://localhost:4173/?matrix=1      # in Safari; do not touch the mouse
 ```
-Then the cross-browser block, **same window size**, in Safari AND Chrome:
-```
-http://localhost:4173/?sweep=drag&seconds=15
-```
-**Why now:** four elements sit directly over the live WebGL canvas with
-`backdrop-filter: blur()` — `.command-row` and `.command-out` at 14px
-(`App.css:321,363`) and the two Universe overlays at 6px (`overlay.css:23`).
-A backdrop filter makes the compositor sample what is behind it, blur it and
-composite, every frame, with the canvas as the source — **after rAF returns**,
-so no instrument in this repo can see it. It is the first hypothesis that
-explains all surviving evidence at once: JS cheap, frame intervals perfect,
-`fx=off` partial, `field=off`/`core=off` making no difference (a backdrop blur
-costs the same regardless of what is behind it — which is exactly why every
-round-2 toggle came back identical), dev ≡ production, and Safari-specific
-severity.
-**Acceptance:** subjective verdict for the two Safari URLs plus both pasted
-`sweep=drag` blocks; interpretation follows the decision tree already written
-in `PERFORMANCE_BASELINE.md` round 5 §G.
-**If confirmed:** the fix is cosmetic — soften or drop the blur on four
-overlays, or lift them out of the canvas's compositing path. The Lead
-Universe, 4,892-lead book, Intelligence Core and FX are untouched either way.
-**Model:** Opus. Fable only once the fix is agreed and is genuinely visual.
+It drives its own scripted drag through ten cases and ends on a copyable
+report. Send the textarea contents back.
+**Why now:** round 5 established backdrop-filter as a **real but partial**
+contributor (removing it is noticeably better; significant lag remains), and
+the owner's careful re-comparison found **Safari ≈ Chrome**, which retires the
+WebKit-specific hypothesis. Several candidates remain — DPR/fill rate, additive
+overdraw, the Core raymarch, the post stack, GPU completion stalls — and none
+can be ranked by argument. The matrix isolates each with one axis changed at a
+time, and records **every frame** with what co-occurred inside it, so a bad
+frame can be classified GPU-bound vs main-thread rather than merely counted.
+**Note on the Chrome numbers:** Chrome measured worse than Safari on every
+percentile while feeling the same, and *every* span rose by a similar factor
+(revisionWalk 2.41→7.72 ms, leadFieldFrame 0.348→1.233, raycast 0.076→0.263).
+That is a different sampling environment, not one path turning pathological —
+`revisionWalk` is explicitly not concluded to be the cause.
+**Acceptance:** report pasted into `PERFORMANCE_BASELINE.md`; the dominant case
+ranked by **p99 / >33 ms count / GPU fence p95**, never by mean; interpretation
+follows the decision tree in round 6 §H.
+**Model:** Opus. Fable only once a fix is agreed and is genuinely visual.
 
-## 1-old. (closed) dev-vs-production A/B — RUN, both feel equally bad
+## 1-old. (closed) Safari `?backdrop=off` A/B — RUN, contributor confirmed (partial)
+Owner verdict: **noticeable improvement, significant lag remains.** The four
+backdrop blurs are a real contributor, not the primary cause. Preserved for a
+later cosmetic fix; not optimised yet. Also: Safari ≈ Chrome subjectively on
+careful re-comparison, retiring the WebKit-specific hypothesis.
+
+## 1-older. (closed) dev-vs-production A/B — RUN, both feel equally bad
 Retires the build-mode hypothesis: StrictMode and unminified React are not the
 explanation. Owner is on **Safari**, which also means every prior
 "0 long tasks" reading was a false negative (fixed this round).

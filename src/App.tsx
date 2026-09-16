@@ -19,7 +19,7 @@ import { Orchestrator } from './ui/Orchestrator';
 import { AppointmentCentre } from './ui/AppointmentCentre';
 import { SystemState } from './ui/SystemState';
 import { UniverseBoundary } from './ui/UniverseBoundary';
-import { DIAG, applyBackdropFlag, runBenchIfRequested, runJankIfRequested } from './diag/diagnostics';
+import { DIAG, applyBackdropFlag, runBenchIfRequested, runJankIfRequested, runMatrixIfRequested } from './diag/diagnostics';
 import { DiagOverlay } from './diag/DiagOverlay';
 import './App.css';
 
@@ -109,8 +109,13 @@ export default function App() {
     return () => source.stop();
   }, [live]);
 
-  // All three no-ops without their flags.
-  useEffect(() => { applyBackdropFlag(); runBenchIfRequested(); runJankIfRequested(); }, []);
+  // All no-ops without their flags.
+  useEffect(() => {
+    applyBackdropFlag();
+    runBenchIfRequested();
+    runJankIfRequested();
+    runMatrixIfRequested();
+  }, []);
 
   return (
     <div className="app">
