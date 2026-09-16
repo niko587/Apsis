@@ -1260,3 +1260,100 @@ worth keeping for the next investigation.
 - The diagnostic modes (`?diag=1`, `?bench=1`, `?jank=1`, `?sweep=`,
   `?matrix=1`, `?dpr=N`, `?field/core/feed/anim=off`, `?backdrop=off`), all
   zero-cost when absent.
+
+
+---
+
+# Matrix semantics audit (2026-09-16, post round-7 + §14)
+
+_Diagnostic harness only. No optimization, no visual or shipping change._
+
+## Why the owner's table looked inconsistent
+
+Round 7 removed **all four** `backdrop-filter` declarations from the shipping
+stylesheets — the built CSS now contains zero live backdrop sampling. The
+round-6 matrix, written before that, still carried a `backdrop=off` case
+labelled *"the four backdrop-filter blurs over the canvas."*
+
+Those blurs no longer exist in shipping, so the toggle injects
+`backdrop-filter: none` onto elements that already have none. **Verified by
+computed style: `?backdrop=off` is byte-identical to baseline. The case
+measured nothing.**
+
+The label was stale. The shipping path was not.
+
+## What that makes of the owner's numbers
+
+The M1 run reported **baseline p99 146 ms** against **backdrop=off p99 37 ms** —
+a 4× gap between two configurations that render identically. That is not a
+finding about backdrops; it is a direct measurement of **run-to-run variance on
+the owner's own hardware**, and it is large.
+
+Reproduced here: five sequential loads of one identical configuration spanned
+p99 18.7 → 31.7 ms, max 20.9 → 81.9 ms, and `>33ms` counts of 0/3/1/0/2.
+
+**Consequence: single-8-second-sample p99 and max cannot resolve the
+differences the matrix was being read for.** Medians are stable; tails are not.
+
+## Verified intact (round 7)
+
+| protection | status |
+|---|---|
+| zero live backdrop sampling in shipping CSS | ✓ built bundle contains none |
+| `Bloom resolutionScale={0.5}` in matrix baseline | ✓ (`LEGACY_FX` false → 0.5) |
+| DPR 2 | ✓ untouched |
+| `?legacyfx=1` interaction with `?matrix=1` | none — explicit only, harness never sets it |
+
+**Matrix "baseline" *is* the round-7 shipping path.** That label was correct.
+
+## §14 structural cost — measured, not argued
+
+Same config (400 leads, no selection), checkpoint `b34c4de` vs `6a28502`:
+
+```
+PRE-§14   37 draws · 400 pts · 7,275 tris
+§14       37 draws · 400 pts · 7,275 tris
+```
+
+**Identical.** The reticle mesh is `visible = false` until individual focus, so
+three.js skips it entirely; +1 draw call appears only while a lead is focused,
+which the scripted drag never does. No new full-screen pass, no backdrop
+(the only occurrence of the string in §14's CSS is a comment forbidding it), no
+per-frame allocation, DOM measurement throttled to every 20th frame.
+
+## Harness fix
+
+- `baseline` → **`SHIPPING baseline`**, labelled *"round-7 shipping: no backdrop
+  sampling, bloom @0.5, DPR 2"*.
+- `backdrop=off` **removed** — it could no longer measure anything.
+- **`LEGACY visual path`** (`?legacyfx=1`) added: the four backdrop blurs plus
+  full-resolution bloom. This is now the only honest before/after for round 7.
+- **`baseline REPEAT (control)`** added, immediately after baseline: an
+  *identical* configuration whose difference from baseline **is the noise
+  floor**, printed at the top of every report with the warning that no smaller
+  difference elsewhere is a finding.
+- **`warm-up (discarded)`** runs first and is excluded, so shader compilation,
+  texture upload and cold JIT stop landing on whichever case happens to be
+  first.
+- `fx=off legacyfx=1` added to separate blur cost from post cost.
+
+Local run of the corrected matrix (software rasterizer — absolute values
+meaningless, structure valid) printed a noise floor of **p99 169 vs 216 ms, max
+177 vs 290 ms** between the two identical rows, and showed the LEGACY path
+genuinely worse (mean 84.4 vs 60.2). The harness now states its own uncertainty.
+
+## Comparability verdict
+
+**The owner's new table cannot be compared row-to-row with round 6's**, for
+three reasons: the `backdrop=off` row changed meaning (it was real then, inert
+now), Persistence v1 now runs during every matrix step (it did not exist in
+round 6), and the tail statistics are inside the noise floor either way.
+
+Medians remain comparable, and they are unchanged and healthy: 17 ms across
+both tables.
+
+## Status
+
+No optimization performed. Round 7 protections verified intact, §14 verified
+structurally free when unfocused, and the harness now measures what its labels
+claim.

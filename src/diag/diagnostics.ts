@@ -1145,16 +1145,24 @@ export interface MatrixCase {
  * attention, and these already cover the candidates round 5 left open.
  */
 export const MATRIX: readonly MatrixCase[] = [
-  { label: 'baseline', query: '', isolates: 'shipping configuration — the control' },
-  { label: 'backdrop=off', query: 'backdrop=off', isolates: 'the four backdrop-filter blurs over the canvas' },
+  {
+    label: 'warm-up (discarded)',
+    query: 'warmup=1',
+    isolates: 'shader compile, texture upload and cold JIT — NOT reported',
+  },
+  { label: 'SHIPPING baseline', query: '', isolates: 'round-7 shipping: no backdrop sampling, bloom @0.5, DPR 2' },
+  {
+    label: 'baseline REPEAT (control)',
+    query: 'control=1',
+    isolates: 'IDENTICAL to baseline — the difference between these two rows IS the noise floor',
+  },
+  { label: 'LEGACY visual path', query: 'legacyfx=1', isolates: 'pre-round-7: four backdrop blurs + full-resolution bloom' },
   { label: 'dpr=1', query: 'dpr=1', isolates: 'pixel count — ~4x fewer fragments at the same CSS size' },
-  { label: 'fx=off', query: 'fx=off', isolates: 'bloom + ACES composer (half-float, 5 mip levels)' },
+  { label: 'fx=off', query: 'fx=off', isolates: 'bloom + ACES composer entirely' },
   { label: 'core=off', query: 'core=off', isolates: 'the raymarched Intelligence Core fragment shader' },
-  { label: 'field=off', query: 'field=off', isolates: 'additive sprite overdraw for 4,892 leads' },
+  { label: 'field=off', query: 'field=off', isolates: 'additive sprite overdraw for the whole book' },
   { label: 'dpr=1 fx=off', query: 'dpr=1&fx=off', isolates: 'whether post cost is mostly pixel-count driven' },
-  { label: 'dpr=1 backdrop=off', query: 'dpr=1&backdrop=off', isolates: 'whether blur cost is mostly pixel-count driven' },
-  { label: 'fx=off backdrop=off', query: 'fx=off&backdrop=off', isolates: 'the two known contributors together' },
-  { label: 'dpr=1 fx=off backdrop=off', query: 'dpr=1&fx=off&backdrop=off', isolates: 'floor: all three removed' },
+  { label: 'fx=off legacyfx=1', query: 'fx=off&legacyfx=1', isolates: 'legacy backdrop blurs with the post stack removed' },
 ];
 
 const MKEY = 'apsis.matrix';
@@ -1258,10 +1266,14 @@ function useLeadCount(): number {
   return Number.isFinite(n) && n > 0 ? n : 4892;
 }
 
-function renderMatrixReport(rows: MatrixRow[]): void {
+function renderMatrixReport(allRows: MatrixRow[]): void {
+  // The warm-up exists to absorb shader compilation, texture upload and cold
+  // JIT so that cost does not land on whichever case happens to run first.
+  // It is measured like any other case and then discarded.
+  const rows = allRows.filter((r) => !r.label.startsWith('warm-up'));
   const L: string[] = [];
   const e0 = rows[0]?.env;
-  L.push('APSIS ROUND 6 MATRIX');
+  L.push('APSIS MATRIX — shipping vs legacy visual path');
   L.push(
     `build=${e0?.build} leads=${e0?.leads} dpr=${e0?.dpr} css=${e0?.css} buffer=${e0?.buffer}`,
   );
@@ -1272,6 +1284,24 @@ function renderMatrixReport(rows: MatrixRow[]): void {
       `gpuTimerQuery=${c.timerQuery ? 'yes' : 'NO'} fenceSync=${c.fenceSync ? 'yes' : 'NO'}`,
   );
   L.push(`gl renderer: ${c.webglRenderer}`);
+  L.push('');
+  // The two rows that matter most are the first two: they are the SAME
+  // configuration. Whatever they differ by is measurement noise, and no
+  // difference between any other pair of rows smaller than that is a finding.
+  const base = rows.find((r) => r.label === 'SHIPPING baseline');
+  const ctrl = rows.find((r) => r.label.startsWith('baseline REPEAT'));
+  if (base && ctrl) {
+    L.push('NOISE FLOOR — "SHIPPING baseline" and "baseline REPEAT" are identical configs');
+    L.push(
+      `  p99 ${base.d.p99.toFixed(0)} vs ${ctrl.d.p99.toFixed(0)} ms · ` +
+        `max ${base.d.max.toFixed(0)} vs ${ctrl.d.max.toFixed(0)} ms · ` +
+        `>33ms ${base.d.over33} vs ${ctrl.d.over33}`,
+    );
+    L.push('  Treat any smaller difference elsewhere in this table as noise, not signal.');
+    L.push('  A single 8s sample cannot resolve p99/max; medians are far more stable.');
+    L.push('');
+  }
+  L.push(`(warm-up case ran first and was discarded; ${allRows.length - rows.length} row excluded)`);
   L.push('');
   L.push('FRAME TIME (ms) — identical scripted drag, 8s per case');
   L.push('case                        mean  med   p95   p99   max   >20  >33  >50 >100  %>33');
