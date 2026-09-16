@@ -660,3 +660,38 @@ D39 cuts both ways: do not hand-roll session crypto, and do not add crypto that
 defends against nothing. **This expires** if the challenge ever carries
 identifying data — an email, a tenant hint, a user-bearing return payload — at
 which point it must be sealed.
+
+## D46 — Logout is Apsis's, not the provider's
+(2026-09-16) Final review found the adapter reading
+`provider ? provider.logout(request) : unconfigured()`, so with WorkOS
+unconfigured the whole route changed shape: `GET` answered 302 instead of 405,
+and a legitimate `POST` could not clear the local cookie at all. A stale session
+could sit in a browser through a configuration outage and become usable again
+the moment configuration returned.
+Not an authentication bypass — `/api/interpret` fails closed — but it made an
+explicit user action depend on a vendor being reachable, and "sign me out" is
+precisely the action that must not.
+The HTTP semantics now live in `server/auth/logout.ts` and are
+provider-independent: method enforcement, the same-origin check (through the
+shared `sameOrigin`, not a copy), and clearing the local cookie all happen
+whether or not a provider exists. The WorkOS adapter contributes only
+`logoutUrl()` — a URL or `null` — and may throw, in which case the local session
+still ends. Nothing is mutated until both guards pass, so a rejected request
+leaves the browser exactly as it found it.
+The general rule: **a local security action must not be gated on a remote
+dependency.** The vendor half is best-effort; the local half is not.
+Forbids: an adapter that changes a route's status semantics based on
+configuration; logout logic in `api/`.
+
+## D47 — A 403 is positive evidence of a session
+(2026-09-16) The client treated `forbidden` as "change nothing", so a stale
+`signed-out` state survived a 403 and left a user who genuinely was signed in
+staring at a "Sign in" link that could not help them.
+A 403 means the server authenticated the request and then refused the
+capability — it PROVES an identity exists. It now corrects the local state to
+signed-in, while still never asking the user to sign in. `unavailable` remains
+the opposite case: no evidence either way, so a known signed-in state is
+preserved and anything else becomes "cannot say".
+The distinction worth keeping: 401 is evidence of no session, 403 is evidence of
+a session, and 503 is evidence of nothing at all.
+Forbids: treating an authorization failure as ambiguous about authentication.

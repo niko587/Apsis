@@ -23,7 +23,6 @@
 
 import { WorkOS } from '@workos-inc/node';
 import { capabilitiesFor } from './capabilities';
-import { sameOrigin } from '../guard';
 import type { AuthResult, Identity } from './identity';
 import {
   CHALLENGE_MAX_AGE_SECONDS,
@@ -60,7 +59,16 @@ export interface AuthProvider {
   authenticate(request: Request): Promise<AuthResult>;
   beginLogin(request: Request): Promise<Response>;
   completeLogin(request: Request): Promise<Response>;
-  logout(request: Request): Promise<Response>;
+  /**
+   * The provider-specific half of logout: where to send the browser so the
+   * session also ends at the vendor, or `null` if there is nowhere to go.
+   *
+   * Deliberately NOT a `Response`. Method enforcement, the same-origin check
+   * and clearing the local cookie belong to `logoutResponse` in `logout.ts`,
+   * because those must behave identically whether or not a provider exists —
+   * "sign me out" cannot depend on a vendor being reachable.
+   */
+  logoutUrl(request: Request): Promise<string | null>;
 }
 
 /* ------------------------------------------------------- SDK surface ------ */
@@ -348,59 +356,17 @@ export function createWorkOSAuthProvider(
       ]);
     },
 
-    async logout(request: Request): Promise<Response> {
-      /**
-       * LOGOUT IS A MUTATION, SO IT IS A POST.
-       *
-       * A `GET` that clears a session and calls the provider is a
-       * state-changing GET: any `<img src>` or link on any page could sign a
-       * user out, and none of the CSRF layers apply to it. `SameSite=Lax`
-       * deliberately attaches cookies to cross-site top-level GETs, which is
-       * precisely what would make that work.
-       *
-       * So a wrong method changes nothing at all — no cookie cleared, no
-       * provider call — and says which method is allowed.
-       */
-      if (request.method !== 'POST') {
-        return new Response(JSON.stringify({ error: 'method_not_allowed' }), {
-          status: 405,
-          headers: {
-            allow: 'POST',
-            'content-type': 'application/json',
-            'cache-control': 'no-store',
-          },
-        });
-      }
+    async logoutUrl(request: Request): Promise<string | null> {
+      const sessionData = readCookie(request, sessionCookieName(isSecureRequest(request)));
+      // No session means no vendor session to end. Not an error.
+      if (!sessionData) return null;
 
-      // The same policy the interpreter enforces, from the same function.
-      if (!sameOrigin(request, config.allowedOrigin)) {
-        return new Response(JSON.stringify({ error: 'cross_origin' }), {
-          status: 403,
-          headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
-        });
-      }
-
-      const secure = isSecureRequest(request);
-      const name = sessionCookieName(secure);
-      const sessionData = readCookie(request, name);
-      const drop = clearCookie(name, secure);
-
-      if (!sessionData) return redirect('/', [drop]);
-
-      // BOTH halves are required. Clearing the cookie alone leaves the session
-      // alive at the provider, so anyone holding a copy keeps it.
-      try {
-        const session = um.loadSealedSession({
-          sessionData,
-          cookiePassword: config.cookiePassword,
-        });
-        const logoutUrl = await session.getLogoutUrl({ returnTo: '/' });
-        return redirect(logoutUrl, [drop]);
-      } catch {
-        // The provider could not be asked. Still clear locally — a partial
-        // logout is better than none, and the user sees a signed-out app.
-        return redirect('/', [drop]);
-      }
+      const session = um.loadSealedSession({
+        sessionData,
+        cookiePassword: config.cookiePassword,
+      });
+      // A throw propagates to `logoutResponse`, which still clears locally.
+      return session.getLogoutUrl({ returnTo: '/' });
     },
   };
 }

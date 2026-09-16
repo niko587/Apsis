@@ -253,13 +253,22 @@ GET /api/auth/callback?code=…&state=…
   → write `auth.sealedSession` as a NEW `apsis_session` cookie (fixation defence)
   → 302 to the validated `returnTo`
 
-POST /api/auth/logout
-  → const session = workos.userManagement.loadSealedSession({ sessionData, cookiePassword })
-  → const url = await session.getLogoutUrl({ returnTo: '/' })   // note the casing
-  → clear `apsis_session` with Max-Age=0, then 302 to `url` so the
-    provider-side session ends too
-  → clearing the cookie WITHOUT the provider redirect would leave the session
-    alive at WorkOS; both halves are required
+POST /api/auth/logout            ← POST only: 405 + `Allow: POST` otherwise
+  → enforce the same-origin policy BEFORE mutating anything
+  → clear `apsis_session` with Max-Age=0        ← ALWAYS, unconditionally
+  → if a provider is configured:
+      const session = workos.userManagement.loadSealedSession({ sessionData, cookiePassword })
+      const url = await session.getLogoutUrl({ returnTo: '/' })   // note the casing
+      302 to `url`, so the provider-side session ends too
+    otherwise 302 to `/`
+
+  Method enforcement, the same-origin check and the local clear live in
+  `server/auth/logout.ts` and are provider-INDEPENDENT (D46): they behave
+  identically whether or not WorkOS is configured or reachable. The vendor half
+  is best-effort; the local half is not, because "sign me out" must not depend
+  on a remote dependency. Clearing the cookie WITHOUT the provider redirect
+  leaves the session alive at WorkOS, so both halves are attempted — but a
+  failure of the second never cancels the first.
 
 GET /api/session
   → `{ authenticated: false }` or

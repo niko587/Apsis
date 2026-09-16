@@ -350,3 +350,28 @@ test.describe('sign-out is a POST', () => {
     expect(posts).toBe(1);
   });
 });
+
+test.describe('a 403 is evidence of a session, not a reason to doubt one', () => {
+  test('a 403 corrects a STALE signed-out state instead of preserving it', async ({ page }) => {
+    // The UI starts out believing it is signed out — a session that was
+    // established after the status call, say. A 403 then proves the server
+    // authenticated the request and merely refused the capability, so showing
+    // a "Sign in" link would send the user somewhere that cannot help them.
+    await declareInterpreter(page);
+    await mockSession(page, { authenticated: false });
+    await page.route(`**${ENDPOINT}`, (route) =>
+      route.fulfill({ status: 403, json: { error: 'forbidden' } }),
+    );
+
+    await boot(page);
+    await expect(signIn(page)).toBeVisible();
+
+    await submit(page, 'find cold leads in Florida');
+    await page.waitForTimeout(1300);
+
+    await expect(signIn(page), 'a 403 must not leave a sign-in invitation up').toHaveCount(0);
+    await expect(signOut(page)).toBeVisible();
+    await expect(note(page)).toHaveText(/not available for this account/);
+    await expect(page.locator('.command-result')).toContainText('leads matched');
+  });
+});

@@ -19,6 +19,7 @@ import {
 import { capabilitiesFor, can } from './capabilities';
 import { publicSessionOf } from './identity';
 import { safeReturnTo, readCookie, buildCookie, isSecureRequest } from './cookies';
+import { logoutResponse } from './logout';
 
 const CONFIG = {
   apiKey: 'sk_test_SECRET_KEY',
@@ -387,9 +388,14 @@ describe('callback', () => {
 });
 
 describe('logout', () => {
+  // Exercised through the facade, because that is what the route actually runs
+  // — the provider only supplies the vendor URL.
+  const logout = (request: Request, provider: ReturnType<typeof providerWith>['provider'] | null) =>
+    logoutResponse(request, { logoutUrl: provider ? (r) => provider.logoutUrl(r) : null });
+
   it('clears the local cookie AND ends the provider session', async () => {
     const { provider, calls } = providerWith();
-    const response = await provider.logout(withSession());
+    const response = await logout(withSession(), provider);
     expect(calls.logout).toBe(1);
     expect(response.headers.get('location')).toBe('https://auth.workos.test/logout');
     const cookies = response.headers.getSetCookie();
@@ -398,15 +404,16 @@ describe('logout', () => {
 
   it('still clears locally when the provider cannot be reached', async () => {
     const { provider } = providerWith({ loadThrows: true });
-    const response = await provider.logout(withSession());
+    const response = await logout(withSession(), provider);
     expect(response.headers.get('location')).toBe('/');
     expect(response.headers.getSetCookie().some((c) => c.includes('Max-Age=0'))).toBe(true);
   });
 
   it('is harmless with no session', async () => {
     const { provider, calls } = providerWith();
-    const response = await provider.logout(
+    const response = await logout(
       new Request('https://apsis.test/api/auth/logout', { method: 'POST' }),
+      provider,
     );
     expect(response.status).toBe(302);
     expect(calls.logout).toBe(0);
@@ -472,7 +479,7 @@ describe('the browser is told the minimum', () => {
     const { provider } = providerWith();
     const responses = [
       await provider.beginLogin(new Request('https://apsis.test/api/auth/login')),
-      await provider.logout(withSession()),
+      await logoutResponse(withSession(), { logoutUrl: (r) => provider.logoutUrl(r) }),
       await provider.completeLogin(new Request('https://apsis.test/api/auth/callback')),
     ];
     for (const response of responses) {

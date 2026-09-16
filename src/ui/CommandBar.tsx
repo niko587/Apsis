@@ -108,15 +108,21 @@ function useSession(): {
   /**
    * Fold what a command's outcome revealed into the session state.
    *
-   * `forbidden` deliberately changes NOTHING: a 403 means the session is valid
-   * and this account lacks the capability, so replacing sign-out with sign-in
-   * would be both wrong and useless. `unavailable` preserves a known signed-in
-   * state for the same reason — a provider blip is not a logout.
+   * `forbidden` is POSITIVE EVIDENCE OF A SESSION. A 403 means the server
+   * authenticated the request and then refused the capability — so it proves
+   * there is an identity, and it corrects a stale `signed-out` rather than
+   * preserving it. (An earlier version returned `current` here, which left a
+   * user who genuinely was signed in staring at a "Sign in" link that could not
+   * help them.) What it must never do is ask them to sign in.
+   *
+   * `unavailable` is the opposite: no evidence either way, so a known
+   * `signed-in` state is preserved and anything else becomes "cannot say". A
+   * provider blip is not a logout.
    */
   const applySignal = useCallback((signal: AuthSignal) => {
     setState((current) => {
       if (signal === 'signed-out') return 'signed-out';
-      if (signal === 'forbidden') return current === 'unknown' ? 'signed-in' : current;
+      if (signal === 'forbidden') return 'signed-in';
       return current === 'signed-in' ? 'signed-in' : 'unavailable';
     });
   }, []);

@@ -15,6 +15,7 @@ import {
   type WorkOSUserManagement,
 } from './provider';
 import { sessionResponse } from './identity';
+import { logoutResponse } from './logout';
 import { clearSessionCookie } from './cookies';
 import { createInterpretHandler } from '../interpret';
 import type { AuthResult, Identity } from './identity';
@@ -73,52 +74,124 @@ const request = (method: string, headers: Record<string, string> = {}) =>
 
 describe('logout is a POST, and enforces CSRF before mutating', () => {
   /**
-   * A GET that clears a session and calls the provider is a state-changing GET:
-   * any `<img src>` on any page could sign a user out, and `SameSite=Lax`
-   * deliberately attaches cookies to cross-site top-level GETs — which is
-   * exactly what would make the attack work.
+   * Exercised through the FACADE, because that is what the route runs and
+   * because the interesting cases are the ones where no provider exists.
+   *
+   * A GET that clears a session and calls the provider can be fired by any
+   * `<img src>` on any page, and `SameSite=Lax` deliberately attaches cookies
+   * to cross-site top-level GETs — which is exactly what would make the attack
+   * work.
    */
-  it.each(['GET', 'HEAD', 'PUT', 'DELETE', 'PATCH'])('%s cannot log out', async (method) => {
+  const configured = () => {
     const { provider, calls } = fake();
-    const response = await provider.logout(request(method, COOKIE));
+    return {
+      calls,
+      logout: (request: Request) =>
+        logoutResponse(request, {
+          logoutUrl: (r) => provider.logoutUrl(r),
+          allowedOrigin: CONFIG.allowedOrigin,
+        }),
+    };
+  };
 
-    expect(response.status, method).toBe(405);
-    expect(response.headers.get('allow')).toBe('POST');
-    // The two things that must not have happened.
-    expect(response.headers.get('set-cookie'), 'no cookie may be cleared').toBeNull();
-    expect(calls.logout, 'the provider must not be called').toBe(0);
+  /** WorkOS absent: the same route, with no provider step. */
+  const unconfigured = () => ({
+    logout: (request: Request) =>
+      logoutResponse(request, { logoutUrl: null, allowedOrigin: CONFIG.allowedOrigin }),
   });
 
+  it.each(['GET', 'HEAD', 'PUT', 'DELETE', 'PATCH'])(
+    '%s cannot log out (WorkOS configured)',
+    async (method) => {
+      const { logout, calls } = configured();
+      const response = await logout(request(method, COOKIE));
+
+      expect(response.status, method).toBe(405);
+      expect(response.headers.get('allow')).toBe('POST');
+      expect(response.headers.get('set-cookie'), 'no cookie may be cleared').toBeNull();
+      expect(calls.logout, 'the provider must not be called').toBe(0);
+    },
+  );
+
+  it.each(['GET', 'HEAD', 'PUT', 'DELETE', 'PATCH'])(
+    '%s cannot log out (WorkOS UNCONFIGURED) — the route keeps its shape',
+    async (method) => {
+      // THE DEFECT THIS PINS: the adapter used to answer 302 here, because with
+      // no provider it bypassed the route semantics entirely.
+      const response = await unconfigured().logout(request(method, COOKIE));
+      expect(response.status, method).toBe(405);
+      expect(response.headers.get('allow')).toBe('POST');
+      expect(response.headers.get('set-cookie')).toBeNull();
+    },
+  );
+
   it('a same-origin POST logs out, both halves', async () => {
-    const { provider, calls } = fake();
-    const response = await provider.logout(
+    const { logout, calls } = configured();
+    const response = await logout(
       request('POST', { ...COOKIE, origin: 'https://apsis.test', 'sec-fetch-site': 'same-origin' }),
     );
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).toBe('https://auth.test/logout');
     expect(calls.logout).toBe(1);
-    expect(response.headers.getSetCookie().some((c) => c.includes('Max-Age=0'))).toBe(true);
+    expect(response.headers.getSetCookie().some((c: string) => c.includes('Max-Age=0'))).toBe(true);
   });
 
-  it('a cross-site POST cannot log out', async () => {
-    const crossSite: Array<Record<string, string>> = [
-      { origin: 'https://evil.test' },
-      { 'sec-fetch-site': 'cross-site' },
-      { 'sec-fetch-site': 'same-site' },
-    ];
-    for (const headers of crossSite) {
-      const { provider, calls } = fake();
-      const response = await provider.logout(request('POST', { ...COOKIE, ...headers }));
-      expect(response.status, JSON.stringify(headers)).toBe(403);
+  it('a same-origin POST clears the LOCAL session even with no provider', async () => {
+    // "Sign me out" must not depend on a vendor being reachable or configured.
+    const response = await unconfigured().logout(
+      request('POST', { ...COOKIE, origin: 'https://apsis.test', 'sec-fetch-site': 'same-origin' }),
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe('/');
+    expect(
+      response.headers.getSetCookie().some((c: string) => c.includes('Max-Age=0')),
+      'the local cookie must still be cleared',
+    ).toBe(true);
+  });
+
+  it('a stale cookie cannot survive a logout just because config is missing', async () => {
+    // The consequence that made this worth fixing: a session left in the
+    // browser through a configuration outage, usable again the moment the
+    // configuration came back.
+    const response = await unconfigured().logout(
+      request('POST', { ...COOKIE, 'sec-fetch-site': 'same-origin' }),
+    );
+    const cleared = response.headers.getSetCookie();
+    expect(cleared.some((c: string) => c.startsWith('__Host-apsis_session=') && c.includes('Max-Age=0'))).toBe(true);
+    expect(cleared.some((c: string) => c.includes('HttpOnly'))).toBe(true);
+  });
+
+  it('no provider call is attempted when none is available', async () => {
+    const { calls } = fake();
+    await logoutResponse(request('POST', COOKIE), { logoutUrl: null });
+    expect(calls.logout).toBe(0);
+  });
+
+  it.each([
+    { origin: 'https://evil.test' },
+    { 'sec-fetch-site': 'cross-site' },
+    { 'sec-fetch-site': 'same-site' },
+  ] as Array<Record<string, string>>)(
+    'a cross-site POST cannot log out, configured or not: %s',
+    async (headers) => {
+      const { logout, calls } = configured();
+      const response = await logout(request('POST', { ...COOKIE, ...headers }));
+      expect(response.status).toBe(403);
       expect(response.headers.get('set-cookie')).toBeNull();
       expect(calls.logout).toBe(0);
-    }
-  });
+
+      const bare = await unconfigured().logout(request('POST', { ...COOKIE, ...headers }));
+      expect(bare.status).toBe(403);
+      expect(bare.headers.get('set-cookie')).toBeNull();
+    },
+  );
 
   it('the session cookie is cleared ONLY on the valid flow', async () => {
     const rejected = [
-      await fake().provider.logout(request('GET', COOKIE)),
-      await fake().provider.logout(request('POST', { ...COOKIE, origin: 'https://evil.test' })),
+      await configured().logout(request('GET', COOKIE)),
+      await configured().logout(request('POST', { ...COOKIE, origin: 'https://evil.test' })),
+      await unconfigured().logout(request('GET', COOKIE)),
+      await unconfigured().logout(request('POST', { ...COOKIE, origin: 'https://evil.test' })),
     ];
     for (const response of rejected) {
       expect(response.headers.getSetCookie()).toEqual([]);
@@ -126,10 +199,21 @@ describe('logout is a POST, and enforces CSRF before mutating', () => {
   });
 
   it('a non-browser POST with no Origin is allowed — curl is not an attack', async () => {
-    const { provider, calls } = fake();
-    const response = await provider.logout(request('POST', COOKIE));
+    const { logout, calls } = configured();
+    const response = await logout(request('POST', COOKIE));
     expect(response.status).toBe(302);
     expect(calls.logout).toBe(1);
+  });
+
+  it('still clears locally when the provider throws', async () => {
+    const response = await logoutResponse(request('POST', COOKIE), {
+      logoutUrl: async () => {
+        throw new Error('vendor unreachable');
+      },
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toBe('/');
+    expect(response.headers.getSetCookie().some((c: string) => c.includes('Max-Age=0'))).toBe(true);
   });
 });
 

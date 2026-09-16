@@ -11,8 +11,8 @@ conversation history. It describes the repository as it actually is.
 | Check | Status | Command |
 |---|---|---|
 | TypeScript | clean (4 projects: app, node, e2e, server) | `npm run typecheck` |
-| Unit tests | **421 / 421 passing** (23 files) | `npm test` |
-| Browser suite | **65 / 65 passing** | `npm run test:e2e` |
+| Unit tests | **432 / 432 passing** (23 files) | `npm test` |
+| Browser suite | **66 / 66 passing** | `npm run test:e2e` |
 | Lint | exit 0 (warnings only, see below) | `npm run lint` |
 | Production build | green, ~1.27 MB bundle (350 KB gz) | `npm run build` |
 | Runtime console | 0 errors at load and through drill/command flows | — |
@@ -485,6 +485,21 @@ which would have surfaced only under a provider incident or a cross-site attack:
    only against an attacker who can read an HttpOnly/Secure/`__Host-` cookie —
    and D39 cuts both ways: do not hand-roll session crypto, and do not add
    crypto that defends against nothing.
+
+**Final adapter closeout (D46–D47)** fixed two more:
+
+7. **Logout depended on vendor configuration.** The adapter read
+   `provider ? provider.logout(...) : unconfigured()`, so with WorkOS
+   unconfigured a `GET` answered 302 instead of 405 and a legitimate `POST`
+   could not clear the local cookie — a stale session could survive a
+   configuration outage and become usable again when it ended. The HTTP
+   semantics now live in `server/auth/logout.ts` and are provider-independent;
+   the adapter contributes only a URL, and may contribute none. **A local
+   security action must not be gated on a remote dependency.**
+8. **A 403 left a stale "signed out" state standing.** A 403 proves the server
+   authenticated the request and then refused the capability, so it is positive
+   evidence of a session — it now corrects the local state rather than
+   preserving a wrong one, while still never asking the user to sign in.
 
 **Neither live verification has been run.** No WorkOS credentials and no
 Anthropic key exist in this environment, so the real sign-in flow and the real
