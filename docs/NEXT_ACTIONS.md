@@ -1,7 +1,7 @@
 # Next Actions
 
-_Last updated: 2026-09-16 (authentication contract). Ordered. Each item:
-what, why now, acceptance, suggested model (spec §2)._
+_Last updated: 2026-09-16 (authentication contract, security revision).
+Ordered. Each item: what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
 - GitHub bootstrap. Remote exists, `main` canonical, `/docs` browsable (D19).
@@ -189,13 +189,35 @@ at the boundary, a public URL is a metered resource left unlocked.
 
 **The recommendation, and why it is not the popular answer.** A managed provider
 (WorkOS AuthKit) with a **hosted sign-in page**, a server-to-server code
-exchange, and a session cookie **Apsis seals itself** with `node:crypto`. No
-browser SDK, no password handling, **no Apsis database, no new dependency**. The
-deciding criterion was not DX — it was what happens when agencies arrive: every
+exchange, and the provider's **sealed session carried in a cookie Apsis owns**.
+No browser SDK, no password handling, **no Apsis database**. The deciding
+criterion was not DX — it was what happens when agencies arrive: every
 self-hosted path means building organization membership, invitations and roles
 by hand, and a database, at exactly the moment the product is trying to sell.
-The provider's token already carries `sub`, `sid`, `org_id`, `role` and
-`permissions`, so teams are a configuration change behind one seam.
+The provider's session already carries `sessionId`, `organizationId`, `role`,
+`roles` and `permissions`, so teams are a configuration change behind one seam.
+
+**Security revision (D39/D40), applied before implementation.** The first draft
+had Apsis hand-roll an AES-256-GCM sealed session containing the refresh token.
+**Withdrawn.** Session sealing, JWT validation against a rotating JWKS, refresh
+rotation and replay grace are exactly where a vetted provider implementation
+beats custom crypto — so the design now uses `@workos-inc/node@^10.13.0`
+server-side (`getAuthorizationUrlWithPKCE`, `authenticateWithCode` with
+`session: { sealSession: true, cookiePassword }`, `loadSealedSession`,
+`authenticate()`, `refresh()`, `getLogoutUrl()`). The SDK has **zero runtime and
+zero peer dependencies**. **D27 is unchanged**: Anthropic stays `fetch`-only,
+there is no browser auth SDK, and WorkOS may be imported by
+`server/auth/provider.ts` alone — enforced by an import scan.
+
+The same revision corrected the refresh semantics. WorkOS rotates refresh tokens
+with a **replay grace period**, so concurrent refreshes do not invalidate each
+other and Apsis must not build a mutex. And the SDK separates **terminal**
+failures (`invalid_grant`, `mfa_enrollment`, `sso_required`, …) from
+**retryable** ones (`rate_limit_exceeded`, `timeout`, `server_error`,
+`network_error`). **A retryable failure must never sign a user out** — the
+cookie is kept and the request answers 503 with `Retry-After`, because treating
+a WorkOS blip as "your session ended" would convert an availability incident
+into logging out every signed-in user at once.
 
 **Three decisions worth arguing with:**
 1. **Identity is derived, never received (D36).** Only the sealed cookie decides
@@ -215,11 +237,11 @@ the moment any real customer data is served from the server, the app-wide gate
 becomes mandatory.**
 
 **Two honest limitations, recorded now rather than discovered later:** a stolen
-cookie stays usable for up to 15 minutes, because with no Apsis-owned store the
-provider is only consulted at the refresh boundary; and rate limits remain
-per-instance cost control rather than durable quotas. Those two are precisely
-the things that will justify a database — and nothing else in this milestone
-does.
+cookie stays usable until the provider-configured access-token lifetime lapses,
+because `authenticate()` validates locally and WorkOS is only consulted at
+`refresh()`; and rate limits remain per-instance cost control rather than
+durable quotas. Those two are precisely the things that will justify a database
+— and nothing else in this milestone does.
 
 ## 1c. (closed) Reachability wheel-stall flake — FIXED (D35)
 `e2e/reachability.spec.ts @1600x1000` failed once, then passed on repeats — the

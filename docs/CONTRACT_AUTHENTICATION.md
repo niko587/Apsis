@@ -21,14 +21,14 @@ input hygiene**. None of it is access control.
 | threat | today | after this milestone |
 |---|---|---|
 | **Unauthenticated API spending** | anyone who can reach the URL can spend the key; the IP bucket is per-instance, so the real ceiling is instances × limit | identity required before the provider is called |
-| **Stolen session cookie** | n/a | HttpOnly + Secure + SameSite=Lax; ≤15 min access lifetime; revocation at refresh (§D) |
+| **Stolen session cookie** | n/a | HttpOnly + Secure + SameSite=Lax; usable only until the provider-configured access-token lifetime lapses; revocation at refresh (§D.1) |
 | **Session fixation** | n/a | a new session is minted on every successful authentication; the pre-auth challenge cookie is cleared |
 | **CSRF** | partially mitigated by accident: JSON-only content type forces a preflight, and no CORS headers are sent | made deliberate — SameSite=Lax + mandatory Origin/Sec-Fetch-Site + JSON-only (§L) |
 | **XSS → auth** | n/a | no token is readable from JS; an XSS can still *ride* the session (see §E) |
 | **Credential stuffing / brute force** | n/a | Apsis never sees a password; the provider owns login and its rate limiting |
-| **Replayed tokens** | n/a | the login `code` is single-use at the provider; refresh tokens rotate |
+| **Replayed tokens** | n/a | the login `code` is single-use at the provider; PKCE binds it to this browser; refresh tokens rotate with a replay grace period (§D.1) |
 | **Privilege escalation** | n/a | capabilities are derived server-side from the provider's claims, never read from the request |
-| **Auth bypass via malformed headers** | n/a | identity comes only from decrypting Apsis's own sealed cookie; no header is consulted |
+| **Auth bypass via malformed headers** | n/a | identity comes only from the SDK opening Apsis's sealed cookie; no header is consulted |
 | **Trusting browser-supplied ids** | n/a | forbidden invariant (§H) |
 | **Rate-limit bypass** | trivially, by changing IP | per-user limiting keyed on the sealed identity (§M) |
 | **Logging secrets** | text/prompts/envelopes already excluded (D31) | extended to cookies, tokens, codes (§N) |
@@ -43,9 +43,10 @@ in service of it.
 
 ## B. Recommended auth strategy
 
-**A managed authentication provider with a hosted sign-in page, and a session
-cookie that Apsis seals itself.** No browser SDK, no password handling, and
-**no Apsis-owned database**.
+**A managed authentication provider with a hosted sign-in page, whose sealed
+session Apsis carries in a cookie it owns and controls.** No browser SDK, no
+password handling, **no Apsis-owned database**, and no session cryptography
+written here.
 
 The comparison that decided it:
 
@@ -56,7 +57,7 @@ The comparison that decided it:
 | **Platform-native (Vercel)** | Vercel Authentication protects *deployments*, not application users. Not applicable — listed because it is worth ruling out explicitly. |
 | **OAuth providers directly (Google/GitHub)** | Still needs session storage and a user record, and forces every future agency onto a consumer identity. Rejected. |
 | **Supabase Auth** | Comes with a Postgres database. That is *more* than this milestone needs, and adopting a platform to get a login form is the definition of painting into a corner. Revisit if and when CRM data moves server-side. Rejected for now. |
-| **Managed provider, hosted page, Apsis-sealed cookie** | **Chosen.** No passwords, no user table, no browser SDK, no new dependency, and organizations/roles arrive for free when needed. |
+| **Managed provider, hosted page, provider-sealed session in Apsis's cookie** | **Chosen.** No passwords, no user table, no browser SDK, no hand-written session crypto, and organizations/roles arrive for free when needed. One server-side dependency, justified in §C. |
 
 The deciding criterion was not popularity or DX: it was **what happens when
 agencies show up**. Every self-hosted path requires building org membership,
@@ -82,58 +83,127 @@ seam.
 UI and accept its SDK and its cookies) and Auth0 (if enterprise compliance
 demands it). Swapping is one file — see §G.
 
-**No new dependency.** The code exchange and refresh are HTTPS POSTs
-(`fetch`), and sealing is AES-256-GCM from `node:crypto`. Apsis does not need to
-verify the provider's JWT, because it never accepts one from the browser: claims
-are read from a response to Apsis's own authenticated server-to-server call, and
-then re-sealed into Apsis's own cookie. **If that ever changes — if Apsis
-accepts a provider-issued JWT directly — it must use a vetted JOSE library and
-never hand-rolled verification.** Hand-written crypto verification is the one
-place "no dependencies" would be the wrong instinct.
+### The dependency, and why it is the right call
+
+**`@workos-inc/node`, pinned to `^10.13.0`, server-side only.**
+
+An earlier draft of this contract had Apsis implement its own AES-256-GCM sealed
+session containing the refresh token. **That was wrong, and it is withdrawn.**
+Session cryptography — sealing, JWT validation against a rotating JWKS, refresh
+rotation, replay grace — is precisely the category where a vetted provider
+implementation beats custom code written once and reviewed by nobody. Being
+dependency-averse is a good instinct that becomes a bad one exactly here.
+
+Three facts make the dependency cheap rather than a compromise:
+
+- **Zero runtime dependencies and zero peer dependencies** (verified against the
+  registry at `10.13.0`). It drags in no supply chain.
+- **`engines: node >=22.11.0`**, which matches the Node 22 runtime the endpoint
+  already targets.
+- **It is server-side only.** No WorkOS code, key, or token reaches the browser.
+
+**This does not relax D27.** That invariant is about *model* integration and
+*browser* credentials, both unchanged: Anthropic remains `fetch`-only with no
+SDK, there is no browser auth SDK, and no WorkOS credential exists client-side.
+The new rule is narrow and stated as its own invariant in §R.
 
 ---
 
 ## D. Session / token model
 
-One cookie, sealed by Apsis, containing:
+**The provider's sealed session, carried in a cookie Apsis owns.** Apsis writes
+no session cryptography of its own.
+
+All API names below were read from the published type definitions of
+`@workos-inc/node@10.13.0`, not from prose. (Worth noting: the docs page renders
+the logout helper as `getLogOutUrl`; the shipped types say **`getLogoutUrl`**.
+The types win.)
 
 ```ts
-interface SessionPayload {
-  userId: string;          // provider `sub` — opaque, stable
-  sessionId: string;       // provider `sid` — for revocation and correlation
-  organizationId: string | null;
-  roles: string[];         // as provided; capabilities are derived, not stored
-  refreshToken: string;    // rotated on every refresh
-  accessExpiresAt: number; // ~15 minutes
-  issuedAt: number;
-}
+// Seal at login — the SDK encrypts and returns the sealed string.
+const auth = await workos.userManagement.authenticateWithCode({
+  code,
+  codeVerifier,                                   // PKCE
+  session: { sealSession: true, cookiePassword },  // cookiePassword ≥ 32 chars
+});
+auth.sealedSession   // → Apsis's cookie value
+
+// Open on every protected request. Synchronous; returns a CookieSession.
+const session = workos.userManagement.loadSealedSession({
+  sessionData: cookieValue,
+  cookiePassword,
+});
+
+const result = await session.authenticate();
+// success → { authenticated: true, sessionId, organizationId?, role?, roles?,
+//             permissions?, entitlements?, featureFlags?, user, impersonator?,
+//             accessToken, authenticationMethod }
+// failure → { authenticated: false, reason: 'invalid_jwt'
+//                                        | 'invalid_session_cookie'
+//                                        | 'no_session_cookie_provided' }
+
+const refreshed = await session.refresh({ cookiePassword, organizationId? });
+// success → { authenticated: true, sealedSession?, session?, …same claims }
+// failure → terminal or retryable — see §D.1
+
+const url = await session.getLogoutUrl({ returnTo });
 ```
 
-- **Sealed**, not signed: AES-256-GCM with `APSIS_SESSION_SECRET` (32 bytes,
-  server-only). The browser cannot read the refresh token, and a tampered cookie
-  fails authentication rather than decoding to something attacker-chosen.
-- **Cookie lifetime** 7 days, sliding. **Access lifetime** ~15 minutes: past it,
-  the server refreshes against the provider (which is where revocation is
-  enforced) and re-seals.
-- **Rotation:** refresh tokens rotate on use; the re-sealed cookie carries the
-  new one. A replayed old refresh token fails at the provider.
-- **Revocation:** logout ends the session at the provider using `sid`, and
-  clears the cookie.
+**What Apsis still owns, and this is the architectural point:** the cookie and
+every one of its attributes, when authentication is required, how `Identity` is
+derived, what capabilities exist, 401/403 semantics, and what the SPA is told.
+The SDK supplies the sealed payload; Apsis decides everything around it. A
+sealed session that fails to open is simply an unauthenticated request.
 
-**The honest limitation, stated rather than buried:** with no Apsis-owned store,
-a *stolen* cookie remains usable until its access window lapses — **up to 15
-minutes** — because that is when the provider is next consulted. Clearing the
-cookie logs out the browser that has it, not a copy someone else holds. That is
+**What was removed from the design:** Apsis's own AES-256-GCM seal/open, its own
+session payload format, its own refresh-token storage, and its own rotation
+handling. `APSIS_SESSION_SECRET` becomes `WORKOS_COOKIE_PASSWORD` — the same
+kind of secret, but consumed by the SDK rather than by code Apsis wrote.
+
+### D.1 Refresh: rotation, replay grace, and failing safe
+
+The earlier draft said concurrent refreshes make the loser's token fail and
+force another refresh. **That was wrong too.** The SDK models the real
+behaviour, and it distinguishes two failure classes in its own types:
+
+```ts
+type RefreshSessionTerminalFailedResponse  = { authenticated: false; reason; retryable: false };
+type RefreshSessionRetryableFailedResponse = { authenticated: false; reason; retryable: true;
+                                               retryAfter?: number; error?: unknown };
+```
+
+| class | reasons | meaning |
+|---|---|---|
+| **terminal** | `invalid_session_cookie`, `no_session_cookie_provided`, `invalid_grant`, `mfa_enrollment`, `sso_required` | the session is over; the user must sign in again |
+| **retryable** | `rate_limit_exceeded`, `timeout`, `server_error`, `network_error` | the refresh token is **likely still valid**; keep the session and retry later |
+
+**Binding fail-safe rule:** `retryable: true` must **never** sign a user out.
+The existing session cookie is left exactly as it is, the request is answered —
+and because refresh only runs when the access token has expired, the honest
+options are to serve the request on the still-valid session if the SDK reports
+it authenticated, or to return **503 with `Retry-After`** rather than 401. A
+WorkOS outage or a 429 must not look like a logout to every signed-in user at
+once. `retryAfter` is honoured when present.
+
+Only `retryable: false` clears the cookie and yields 401.
+
+**Concurrent refresh** is handled by WorkOS's refresh-token rotation with a
+replay grace period: two tabs refreshing at once do not invalidate each other,
+which is why no cross-tab coordination is needed and why Apsis must not build
+a refresh mutex. On success the returned `sealedSession` **must** be written
+back as the new cookie value — dropping it is how a rotated token gets lost.
+
+**The revocation window, restated accurately.** `authenticate()` validates the
+access JWT locally; WorkOS is only consulted at `refresh()`. So a stolen cookie
+remains usable until the access token expires — a lifetime **configured in the
+WorkOS dashboard**, not chosen by Apsis, and short by default. Clearing the
+cookie logs out the browser holding it, not a copy someone else took. That is
 proportionate while the protected resource is a metered API and no customer
-records exist server-side. **It stops being proportionate the moment CRM data
-moves server-side**, and the fix then is a revocation denylist in durable
-storage — which is one of the two things that would justify a database (§I).
+records exist server-side; it stops being proportionate the moment CRM data
+moves server-side, which is §I's trigger.
 
-**Multi-tab:** the cookie is shared by tabs, so a refresh in one tab is
-immediately effective in all. Concurrent refreshes are possible; the loser's
-rotated token fails and it simply refreshes again. No cross-tab coordination.
-
----
+**Multi-tab:** the cookie is shared across tabs, so a refresh in one is
+immediately effective in all.
 
 ## E. Cookie / security attributes
 
@@ -153,47 +223,61 @@ session, not abuse of it while the page is compromised. The real mitigations are
 the existing CSP-shaped discipline (no third-party scripts, no `eval`) and a
 short access lifetime. Say so rather than treating HttpOnly as a solved problem.
 
-**No token in `localStorage`, `sessionStorage`, or JS memory. Ever.** The only
-thing the browser learns about the session is what `GET /api/session` chooses to
-tell it (§Q).
+**No token in `localStorage`, `sessionStorage`, or JS memory. Ever.** The cookie
+value is the provider's sealed blob — opaque to the browser and useless without
+`WORKOS_COOKIE_PASSWORD`, which exists only on the server. The only thing the
+browser learns about the session is what `GET /api/session` chooses to tell it
+(§Q). The browser never receives the WorkOS API key, an access token, a refresh
+token, or the cookie password.
 
 ---
 
 ## F. Authentication flow
 
+Every call below is a real `@workos-inc/node@10.13.0` API, read from its types.
+
 ```
 GET /api/auth/login?returnTo=/
-  → generate PKCE verifier + `state`
-  → seal both into a short-lived HttpOnly `apsis_auth_challenge` cookie (10 min)
-  → 302 to the provider's hosted sign-in page
+  const { url, state, codeVerifier } =
+    await workos.userManagement.getAuthorizationUrlWithPKCE({ redirectUri, … })
+  → seal `state` + `codeVerifier` into a short-lived HttpOnly
+    `apsis_auth_challenge` cookie (10 min, SameSite=Lax)
+  → 302 to `url`
 
 GET /api/auth/callback?code=…&state=…
   → open the challenge cookie; require `state` to match; clear it immediately
-  → POST the code + PKCE verifier to the provider (server-to-server, API key)
-  → receive user, org, roles, refresh token
-  → MINT A NEW SESSION (fixation defence) and seal `apsis_session`
+  → const auth = await workos.userManagement.authenticateWithCode({
+        code, codeVerifier,
+        session: { sealSession: true, cookiePassword: WORKOS_COOKIE_PASSWORD },
+      })
+  → write `auth.sealedSession` as a NEW `apsis_session` cookie (fixation defence)
   → 302 to the validated `returnTo`
 
 POST /api/auth/logout
-  → end the provider session using `sid`
-  → clear `apsis_session` with Max-Age=0
-  → 204
+  → const session = workos.userManagement.loadSealedSession({ sessionData, cookiePassword })
+  → const url = await session.getLogoutUrl({ returnTo: '/' })   // note the casing
+  → clear `apsis_session` with Max-Age=0, then 302 to `url` so the
+    provider-side session ends too
+  → clearing the cookie WITHOUT the provider redirect would leave the session
+    alive at WorkOS; both halves are required
 
 GET /api/session
   → `{ authenticated: false }` or
     `{ authenticated: true, userId, organizationId, capabilities }`
 ```
 
-- **`state` + PKCE** are mandatory. `state` is the CSRF defence for the redirect;
-  PKCE means an intercepted `code` is useless without the verifier.
+- **PKCE and `state` come from the SDK** (`getAuthorizationUrlWithPKCE` returns
+  `{ url, state, codeVerifier }`), so neither is hand-generated. `state` is the
+  CSRF defence for the redirect; PKCE means an intercepted `code` is useless
+  without the verifier.
 - **`returnTo` is allowlisted:** must begin with a single `/`, must not begin
   with `//` or `/\`, must not contain a scheme. Anything else becomes `/`. This
-  is the open-redirect defence and it is not optional.
+  is the open-redirect defence and it is not optional — it applies to the login
+  `returnTo` *and* to the value handed to `getLogoutUrl`.
 - **No account enumeration:** Apsis has no endpoint that takes an email. The
-  provider's hosted page owns that surface and its own anti-enumeration
-  behaviour.
-
----
+  provider's hosted page owns that surface.
+- `WORKOS_COOKIE_PASSWORD` must be **at least 32 characters**; the SDK rejects
+  shorter ones.
 
 ## G. Authorization seam
 
@@ -213,8 +297,9 @@ export interface AuthProvider {
 }
 
 export type AuthResult =
-  | { status: 'anonymous' }
-  | { status: 'expired' }
+  | { status: 'anonymous' }                                   // → 401
+  | { status: 'expired' }                                     // → 401, clear cookie
+  | { status: 'transient'; retryAfter?: number }              // → 503, KEEP cookie (§D.1)
   | { status: 'authenticated'; identity: Identity; setCookie?: string };
 ```
 
@@ -321,8 +406,13 @@ makes the dev bypass structural (§O).
 
 | status | meaning | body |
 |---|---|---|
-| **401** | no session, expired, malformed, or revoked | `{"error":"unauthenticated"}` |
+| **401** | no session, expired, malformed, or terminally refused | `{"error":"unauthenticated"}` |
 | **403** | valid session without the capability | `{"error":"forbidden"}` |
+| **503** | refresh failed **transiently** — session kept, not a logout (§D.1) | `{"error":"auth_unavailable"}` + `Retry-After` |
+
+The 503 is the fail-safe that stops a WorkOS outage or a 429 from reading as a
+mass logout. The client treats it exactly like every other non-2xx: fall back to
+the grammar with a note, and leave the session alone.
 
 All four 401 causes return the **same** body and the same status. Distinguishing
 "expired" from "never existed" tells an attacker which cookies are real. No
@@ -486,66 +576,109 @@ No live region is added; the note lives in the outcome panel as it does now.
 
 ## R. Files allowed to change
 
-- **new** `server/auth/session.ts` — seal/open, cookie construction, attributes
-- **new** `server/auth/provider.ts` — the `AuthProvider` seam + WorkOS impl
-- **new** `server/auth/capabilities.ts` — `capabilitiesFor`, `can`
+- **new** `server/auth/provider.ts` — the `AuthProvider` seam + the WorkOS
+  adapter. **The only file permitted to import `@workos-inc/node`** (besides its
+  own tests).
+- **new** `server/auth/capabilities.ts` — `capabilitiesFor`, `can`. No WorkOS import.
+- **new** `server/auth/identity.ts` — the `Identity` type and `AuthResult`. No WorkOS import.
 - **new** `server/auth/*.test.ts`
-- `server/interpret.ts` — inject `authenticate`, the order in §J
-- `server/guard.ts` — limiter keying only; existing transport guards unchanged
+- `server/interpret.ts` — inject `authenticate`, the order in §J. **Must depend
+  only on the generic seam**, never on WorkOS types.
+- `server/guard.ts` — limiter keying only; transport guards unchanged
 - **new** `api/auth/login.ts`, `api/auth/callback.ts`, `api/auth/logout.ts`,
   `api/session.ts` — thin adapters, same rule as `api/interpret.ts`
 - `scripts/dev-interpreter.mjs`, **new** `scripts/devIdentity.mjs`
-- `src/command/interpreter.ts`, `src/command/router.ts` — 401 note only
+- `src/command/interpreter.ts`, `src/command/router.ts` — 401/503 notes only
 - `src/ui/CommandBar.tsx` — the sign-in affordance only
 - `vercel.json` — `supportsCancellation` for the new functions
+- `package.json` — **`@workos-inc/node` only**
 - `.env.example`, README, `docs/**`, new test files
+
+### The dependency rule (binding)
+
+1. `@workos-inc/node`, pinned `^10.13.0`, **server-side, authentication only**.
+2. **No WorkOS browser SDK**, and no WorkOS credential, token or cookie password
+   in the browser.
+3. **No LLM SDK** — Anthropic stays `fetch`-only. D27 is unchanged.
+4. WorkOS may be imported by `server/auth/provider.ts` and its tests **and
+   nowhere else**. Not by `server/interpret.ts`, not by `api/**`, not by
+   `src/**`, not by domain code.
+5. `/api/interpret` depends only on the generic `authenticate` / `Identity`
+   seam, so swapping providers touches one file.
+
+A test enforces rules 2 and 4 by scanning imports, because a boundary nobody
+checks is a boundary that moves.
 
 ## S. Files forbidden to change
 
 `src/domain/**` (`query.ts` is still the oracle) · `src/state/**` ·
 `src/universe/**` · `src/orchestrator/**` · `src/ui/**` except `CommandBar.tsx` ·
-`src/command/parseInterpretation.ts` (the validator's authority is unrelated to
-auth) · `e2e/llm-command.spec.ts` · `e2e/reachability.spec.ts` ·
+`src/command/parseInterpretation.ts` · `server/provider.ts` and
+`server/prompt.ts` (the model path is unrelated to auth) ·
+`e2e/llm-command.spec.ts` · `e2e/reachability.spec.ts` ·
 `e2e/host-boundary.spec.ts` · `e2e/progressive-reveal.spec.ts` ·
 `e2e/spatial-focus.spec.ts` · `e2e/persistence.spec.ts` · `.github/**` beyond a
 job needing no secret.
 
-**No new runtime dependency** unless §C's JOSE exception is actually triggered,
-which this design avoids.
+**No runtime dependency other than `@workos-inc/node`.**
 
 ---
 
 ## T. Unit tests
 
-1. **Unauthenticated never reaches the provider** — a fake provider asserts zero
-   calls across every unauthenticated shape.
+Every test uses a **fake `AuthProvider`** except the adapter tests, which use a
+fake WorkOS client. **CI never needs a WorkOS account or credential.**
+
+1. **Unauthenticated never reaches the provider** — a fake model provider
+   asserts zero calls across every unauthenticated shape.
 2. Valid session → 200 through `/api/interpret`.
-3. Expired session → 401 (and the cookie is cleared).
-4. Malformed session → 401: truncated, wrong key, flipped ciphertext bit,
-   valid-JSON-but-wrong-shape, empty.
-5. Revoked session → 401 at the refresh boundary.
-6. **Forged identity ignored** — `x-user-id`, `x-org-id`, `role` headers and
-   body fields change nothing; the identity still comes from the cookie.
-7. Authenticated but lacking the capability → 403.
-8. Logout → the cookie is cleared with `Max-Age=0` and the provider session is
-   ended; a subsequent protected call is 401.
-9. **CSRF** — cross-site `Origin` is 403 before auth runs; `state` mismatch on
-   callback is rejected; a missing challenge cookie is rejected.
-10. **Cookie attributes** — `HttpOnly`, `Secure` in production, `SameSite=Lax`,
-    `Path=/`, no `Domain`, and `Secure` omitted only for `http://localhost`.
-11. **No secret in logs** — cookie value, refresh token, `code` and `state`
-    absent from every `LogEntry`; email absent because it is never stored.
-12. **Per-user isolation** — two users behind one IP have independent buckets.
-13. **IP backstop** — an unauthenticated flood from one IP is still limited.
-14. **Auth failure consumes no provider tokens** — 401/403 paths assert zero
-    provider calls and zero quota decrements.
-15. `returnTo` allowlist — `//evil.test`, `/\evil.test`, `https://evil.test`,
-    and a scheme-relative URL all collapse to `/`.
-16. Session fixation — the session id after login differs from any pre-auth
-    cookie, and the challenge cookie is cleared.
-17. Sealed cookie round-trips under a test secret; a different secret fails to
-    open it.
-18. **No dev bypass in the production graph** — the import graph from
+3. Expired session → 401, and the cookie is cleared.
+4. Malformed session → 401 for each SDK reason: `invalid_jwt`,
+   `invalid_session_cookie`, `no_session_cookie_provided`.
+5. **Terminal refresh → 401.** Each of `invalid_grant`, `mfa_enrollment`,
+   `sso_required`, `invalid_session_cookie`, `no_session_cookie_provided`
+   clears the cookie and de-authenticates.
+6. **Transient refresh → session survives.** Each of `rate_limit_exceeded`,
+   `timeout`, `server_error`, `network_error` returns 503 with `Retry-After`,
+   **leaves the cookie untouched**, and does NOT sign the user out. This is the
+   regression test for "a WorkOS blip logs everyone out".
+7. **Rotation is persisted** — a successful `refresh()` returning a new
+   `sealedSession` writes it back as the cookie; dropping it is a bug the test
+   catches.
+8. **Concurrent refresh** — two overlapping refreshes on the same session both
+   resolve without either being de-authenticated, matching WorkOS's replay
+   grace; and Apsis adds no refresh mutex.
+9. **Adapter mapping** — a WorkOS success response maps to canonical `Identity`:
+   `sessionId` from `sessionId`, `organizationId` from `organizationId ?? null`,
+   `capabilities` from `capabilitiesFor(role/roles/permissions)`. **`user`,
+   email and profile fields are dropped**, asserted field by field.
+10. **Forged identity ignored** — `x-user-id`, `x-org-id`, `role` headers and
+    body fields change nothing.
+11. Authenticated without the capability → 403.
+12. Logout clears the cookie with `Max-Age=0` **and** redirects to
+    `getLogoutUrl()`; a subsequent protected call is 401.
+13. **CSRF** — cross-site `Origin` is 403 before auth runs; `state` mismatch is
+    rejected; a missing challenge cookie is rejected.
+14. **Cookie attributes** — `HttpOnly`, `Secure` in production, `SameSite=Lax`,
+    `Path=/`, no `Domain`; `Secure` omitted only for `http://localhost`.
+15. **Browser never sees provider tokens** — no response body or non-session
+    header ever contains an access token, refresh token, API key or the cookie
+    password; `/api/session` returns only `authenticated`, `userId`,
+    `organizationId`, `capabilities`.
+16. **No secret in logs** — cookie value, sealed session, tokens, `code` and
+    `state` absent from every `LogEntry`; email absent because it is never stored.
+17. **Per-user isolation** — two users behind one IP have independent buckets.
+18. **IP backstop** — an unauthenticated flood from one IP is still limited.
+19. **Auth failure consumes no provider tokens** — 401/403/503 paths assert zero
+    model-provider calls.
+20. `returnTo` allowlist — `//evil.test`, `/\evil.test`, `https://evil.test`
+    and scheme-relative URLs all collapse to `/`, for login and logout.
+21. Session fixation — the session after login differs from any pre-auth cookie,
+    and the challenge cookie is cleared.
+22. **Import boundary** — only `server/auth/provider.ts` (and its tests) imports
+    `@workos-inc/node`; nothing under `src/`, `api/`, or the rest of `server/`
+    does.
+23. **No dev bypass in the production graph** — the import graph from
     `api/interpret.ts` never reaches `scripts/`.
 
 ## U. Browser tests
@@ -568,35 +701,46 @@ which this design avoids.
    argued.
 2. Identity is derived only from Apsis's sealed cookie; forged headers and body
    fields are inert.
-3. 401 and 403 are distinct, and all 401 causes are indistinguishable to the
-   caller.
-4. No token or session secret is readable from JavaScript or present in any log.
-5. The IP backstop survives; per-user limiting is added, not substituted.
-6. The default build still makes zero network requests and needs no credential.
-7. CI passes with no provider credential.
-8. The dev bypass is absent from the production import graph, proven by test.
-9. `src/domain/**`, `src/state/**`, `src/universe/**` unchanged; the 320 unit /
-   48 browser baselines hold and grow, never shrink.
-10. Grammar fallback, validator authority, provider privacy boundary,
+3. 401, 403 and 503 are distinct, and all 401 causes are indistinguishable to
+   the caller.
+4. **A transient refresh failure never signs anyone out** — `retryable: true`
+   keeps the cookie and answers 503, asserted for all four reasons.
+5. No token, sealed session, API key or cookie password is readable from
+   JavaScript, returned to the browser, or present in any log.
+6. Apsis writes no session cryptography; sealing, JWT validation and rotation
+   are the SDK's. A rotated `sealedSession` is always persisted.
+7. `@workos-inc/node` is imported by `server/auth/provider.ts` and its tests
+   only — enforced by an import scan — and no browser auth SDK exists.
+8. The IP backstop survives; per-user limiting is added, not substituted.
+9. The default build still makes zero network requests and needs no credential.
+10. CI passes with **no WorkOS account and no credential of any kind**.
+11. The dev bypass is absent from the production import graph, proven by test.
+12. `src/domain/**`, `src/state/**`, `src/universe/**` unchanged; the 320 unit /
+    48 browser baselines hold and grow, never shrink.
+13. D27 intact: Anthropic is still `fetch`-only with no LLM SDK.
+14. Grammar fallback, validator authority, provider privacy boundary,
     cancellation, D32–D35, Round 7, §14, progressive reveal, persistence and
     replay all intact.
 
 ## W. Implementation sequence
 
-1. `server/auth/session.ts` + tests — seal/open and cookie attributes first,
-   with no provider and no endpoint. This is where the crypto lives; get it
-   right in isolation.
-2. `server/auth/capabilities.ts` + tests — trivial now, and the seam that stops
-   roles leaking into endpoints later.
-3. `server/auth/provider.ts` — the seam, the WorkOS implementation, PKCE,
-   `state`, `returnTo` allowlist. Fake provider for tests.
-4. `server/interpret.ts` — inject `authenticate`, implement §J's order. All of
-   §T.1–7, 12–14 against fakes.
+1. `package.json` — add `@workos-inc/node` pinned `^10.13.0`. Confirm the lock
+   file adds no transitive runtime dependency.
+2. `server/auth/identity.ts` + `capabilities.ts` + tests — the canonical
+   `Identity`, `AuthResult` (including `transient`), and `capabilitiesFor`.
+   **No WorkOS import in either file**; this is the seam everything else uses.
+3. `server/auth/provider.ts` — the WorkOS adapter: `getAuthorizationUrlWithPKCE`,
+   `authenticateWithCode({ session: { sealSession: true, cookiePassword } })`,
+   `loadSealedSession`, `authenticate()`, `refresh()`, `getLogoutUrl()`, the
+   `returnTo` allowlist, and the **terminal vs retryable** mapping of §D.1.
+   Tests with a fake WorkOS client — T.4–9 live here.
+4. `server/interpret.ts` — inject `authenticate`, implement §J's order. T.1–2,
+   10–11, 17–19 against fakes.
 5. `api/auth/*` and `api/session.ts` adapters; `vercel.json` entries.
-6. `scripts/devIdentity.mjs` + wiring; §T.18.
-7. Client: 401-aware note, then the sign-in affordance.
+6. `scripts/devIdentity.mjs` + wiring; T.22–23.
+7. Client: 401/503-aware notes, then the sign-in affordance.
 8. Browser tests with mocked `/api/session`.
-9. Full gates, then a real end-to-end login against the provider's dev
+9. Full gates, then a real end-to-end login against a WorkOS **development**
    environment, **reported honestly** — including whether it was actually run.
 
 ## X. Recommended implementation model
@@ -611,32 +755,47 @@ visual component. The only UI is one affordance and one line of text.
 > MODEL: OPUS HIGH. Repo `niko587/Apsis`, branch `main`, checkpoint `<current>`.
 >
 > Read `docs/CONTRACT_AUTHENTICATION.md` and treat it as binding. Follow §W in
-> order — the sealed session and its cookie attributes first, in isolation,
-> before any provider or endpoint exists.
+> order — the canonical `Identity` and capability seam first, with no WorkOS
+> import in them, before the adapter exists.
 >
-> Put an identity in front of `POST /api/interpret`: a managed provider's hosted
-> sign-in page, a server-to-server code exchange, and a session cookie **Apsis
-> seals itself** with `node:crypto`. No browser SDK, no password handling, no
-> Apsis database, **no new dependency**.
+> Put an identity in front of `POST /api/interpret` using **WorkOS AuthKit via
+> `@workos-inc/node@^10.13.0`, server-side only**. Use the SDK's own session
+> primitives — `getAuthorizationUrlWithPKCE`, `authenticateWithCode` with
+> `session: { sealSession: true, cookiePassword }`, `loadSealedSession`,
+> `authenticate()`, `refresh()`, `getLogoutUrl()`. **Write no session
+> cryptography.** The earlier hand-rolled AES-256-GCM design is withdrawn.
 >
-> **The requirement that defines the milestone (§J):** authentication runs
-> *before the request body is read*, so an unauthenticated request is refused
-> before its payload is received and can never reach the provider. Prove it with
-> a fake provider asserting zero calls.
+> **The requirement that defines the security posture (§H, D36):** identity is
+> derived server-side from the sealed cookie. `userId`, `organizationId`, roles
+> and capabilities sent by the browser are ignored, and a test asserts forged
+> values change nothing. Drop `user`, email and profile — carry only
+> `userId`, `sessionId`, `organizationId`, `capabilities`, `expiresAt`.
 >
-> **The requirement that defines the security posture (§H):** identity comes
-> only from decrypting Apsis's own cookie. `userId`, `organizationId`, roles and
-> capabilities sent by the browser are ignored, and a test asserts forged values
-> change nothing.
+> **The requirement that defines the milestone (§J, D37):** the IP limiter runs
+> before authentication and authentication runs *before the request body is
+> read*, so an unauthenticated request can never reach the model provider. Prove
+> it with a fake model provider asserting zero calls.
+>
+> **The requirement that stops an outage becoming a mass logout (§D.1):** a
+> `retryable: true` refresh failure — `rate_limit_exceeded`, `timeout`,
+> `server_error`, `network_error` — **keeps the session**, returns 503 with
+> `Retry-After`, and never clears the cookie. Only `retryable: false` yields 401.
+>
+> **The boundary that must not move (§R):** `@workos-inc/node` may be imported
+> by `server/auth/provider.ts` and its tests and nowhere else — not by
+> `server/interpret.ts`, not by `api/**`, not by `src/**`. No browser auth SDK,
+> no WorkOS credential in the browser, and Anthropic stays `fetch`-only. A test
+> scans imports and enforces it.
 >
 > **The requirement that keeps the project workable (§O, §Q):** the dev identity
-> lives outside `server/`, is imported only by `scripts/`, and is therefore
-> absent from the production bundle — asserted by an import-graph test. No
-> `?auth=off`. And v1 gates the **interpreter, not the application**, so the
-> default build still needs no credential and still makes zero requests.
+> lives outside `server/`, is imported only by `scripts/`, and is absent from the
+> production bundle — asserted by an import-graph test. No `?auth=off`. v1 gates
+> the **interpreter, not the application**, so the default build still needs no
+> credential and still makes zero requests.
 >
 > Files allowed in §R, forbidden in §S. Meet every criterion in §V. Run
 > TypeScript, lint, all unit/server tests, build, and the full browser suite;
-> the 320/48 baselines must hold and grow.
+> the 320 unit / 48 browser baselines must hold and grow. CI must pass with **no
+> WorkOS credential**.
 >
 > Do not begin CRM integration, billing, or a user database.

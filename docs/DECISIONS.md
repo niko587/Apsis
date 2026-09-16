@@ -512,3 +512,58 @@ the moment any real customer data is served from the server, the app-wide gate
 becomes mandatory.**
 Forbids: a query parameter or environment variable that disables authentication;
 shipping dev-auth code in a production artifact.
+
+
+## D39 — Use the provider's session primitives; write no session cryptography
+(2026-09-16) **Supersedes the sealed-session part of the original auth
+contract.** That draft had Apsis implement its own AES-256-GCM seal containing
+the WorkOS refresh token. Withdrawn: sealing, JWT validation against a rotating
+JWKS, refresh rotation and replay grace are exactly the category where a vetted
+provider implementation beats custom crypto written once and reviewed by nobody.
+Dependency aversion is a good instinct that becomes a bad one precisely here.
+`@workos-inc/node` pinned `^10.13.0`, server-side, authentication only. It has
+**zero runtime and zero peer dependencies** and `engines: node >=22.11.0`, which
+matches the runtime the endpoint already targets — so it drags in no supply
+chain and no version conflict.
+**D27 is unchanged, not relaxed.** That invariant is about model integration and
+browser credentials: Anthropic stays `fetch`-only with no SDK, there is no
+browser auth SDK, and no WorkOS key, token or cookie password exists
+client-side. The new rule is narrow: WorkOS may be imported by
+`server/auth/provider.ts` and its tests and NOWHERE else — not by
+`server/interpret.ts`, not by `api/**`, not by `src/**` — so `/api/interpret`
+depends only on the generic `authenticate`/`Identity` seam and swapping
+providers touches one file. An import scan enforces it, because a boundary
+nobody checks is a boundary that moves.
+Apsis still owns the cookie and its attributes, when authentication is required,
+how `Identity` is derived, what capabilities exist, and the status semantics.
+Using the SDK is not surrendering the boundary; it is declining to hand-roll the
+one part that is genuinely hard.
+API names were read from the published type definitions rather than prose — the
+docs page renders the logout helper as `getLogOutUrl` while the shipped types
+say `getLogoutUrl`. Verify against types, not documentation.
+Forbids: hand-written session sealing or JWT verification; importing WorkOS
+outside `server/auth/provider.ts`; any auth SDK, key or token in the browser.
+
+## D40 — A transient provider failure is not a logout
+(2026-09-16) The original contract claimed concurrent refreshes make the loser's
+token fail and force another refresh. That was wrong. WorkOS rotates refresh
+tokens with a **replay grace period**, so overlapping refreshes do not
+invalidate each other — which means Apsis must NOT build a refresh mutex or
+cross-tab coordination.
+More importantly, the SDK distinguishes two failure classes in its own types:
+`RefreshSessionTerminalFailedResponse { retryable: false }` for
+`invalid_grant`, `mfa_enrollment`, `sso_required`, `invalid_session_cookie`,
+`no_session_cookie_provided`; and `RefreshSessionRetryableFailedResponse
+{ retryable: true, retryAfter? }` for `rate_limit_exceeded`, `timeout`,
+`server_error`, `network_error`.
+**Binding fail-safe: `retryable: true` must never sign a user out.** The cookie
+is left untouched and the request answers **503 with `Retry-After`**, never 401.
+Treating a WorkOS timeout or 429 as "your session ended" would log out every
+signed-in user at once during an outage — an availability incident converted
+into a credential incident. Only `retryable: false` clears the cookie and yields
+401.
+A successful refresh returns a new `sealedSession` which MUST be written back as
+the cookie; dropping it silently loses the rotated token and the next refresh
+fails terminally.
+Forbids: mapping any retryable refresh failure to 401; discarding a rotated
+sealed session; adding a refresh mutex.

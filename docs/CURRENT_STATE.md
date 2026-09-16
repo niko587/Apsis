@@ -1,7 +1,7 @@
 # Current State
 
-_Last updated: 2026-09-16 (authentication contract; previous phase: host
-interpreter endpoint + deployment hardening)_
+_Last updated: 2026-09-16 (authentication contract + security revision;
+previous phase: host interpreter endpoint + deployment hardening)_
 
 This file is the snapshot an external AI project manager should trust over any
 conversation history. It describes the repository as it actually is.
@@ -399,13 +399,26 @@ still unauthenticated — the primary production blocker. Contract:
 `docs/CONTRACT_AUTHENTICATION.md`, **not implemented**.
 
 **Approach:** a managed provider (WorkOS AuthKit) with a hosted sign-in page, a
-server-to-server code exchange, and a session cookie **Apsis seals itself** with
-`node:crypto`. No browser SDK, no password handling, **no Apsis database and no
-new dependency**. Chosen on what happens when agencies arrive rather than on DX:
-every self-hosted path means hand-building organization membership, invitations
-and roles — and a database — at the moment the product is trying to sell, while
-the provider's token already carries `sub`, `sid`, `org_id`, `role` and
+server-to-server code exchange, and the provider's **sealed session carried in a
+cookie Apsis owns**. No browser SDK, no password handling, **no Apsis database**.
+Chosen on what happens when agencies arrive rather than on DX: every self-hosted
+path means hand-building organization membership, invitations and roles — and a
+database — at the moment the product is trying to sell, while the provider's
+session already carries `sessionId`, `organizationId`, `role`, `roles` and
 `permissions`.
+
+**Security revision before implementation (D39/D40).** The first draft had Apsis
+hand-roll an AES-256-GCM sealed session holding the refresh token. Withdrawn —
+session sealing, JWT validation against a rotating JWKS, rotation and replay
+grace are exactly where a vetted implementation beats custom crypto. The design
+now uses `@workos-inc/node@^10.13.0` **server-side only**, which has zero
+runtime and zero peer dependencies. **D27 is unchanged**: Anthropic stays
+`fetch`-only, there is no browser auth SDK, and WorkOS may be imported by
+`server/auth/provider.ts` alone, enforced by an import scan. The same revision
+fixed the refresh semantics: WorkOS rotates with a replay grace period (so no
+mutex), and a **retryable** failure — rate limit, timeout, 5xx, network — keeps
+the session and answers 503, because treating a provider blip as "your session
+ended" would log out every signed-in user at once.
 
 **Three decisions (D36–D38):** identity is derived from the sealed cookie and
 never received from the browser; the IP limiter runs before authentication and
@@ -422,10 +435,10 @@ the moment real customer data is served from the server, the app-wide gate
 becomes mandatory.
 
 **Two limitations designed in and recorded, not hidden:** a stolen cookie stays
-usable for up to 15 minutes, because with no Apsis-owned store the provider is
-only consulted at the refresh boundary; and rate limits stay per-instance cost
-control rather than durable quotas. Those two are the only things that would
-justify adding a database.
+usable until the provider-configured access-token lifetime lapses, because
+`authenticate()` validates locally and WorkOS is only consulted at `refresh()`;
+and rate limits stay per-instance cost control rather than durable quotas. Those
+two are the only things that would justify adding a database.
 
 **No real-key call has been made.** Request and response shapes are asserted
 against the current published API (model ids, forced `tool_choice`, and the
