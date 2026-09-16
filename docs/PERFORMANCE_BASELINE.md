@@ -438,3 +438,142 @@ the next round from rationalising whatever appears.
 refuted by real hardware; round 2 built the instrument rather than substituting
 a second guess. The next action is the owner running `?bench=1` — after which
 the fix is chosen by the table, not by argument.
+
+---
+
+# Round 3: interaction and jank
+
+_2026-09-15. **No bottleneck confirmed. This round rules things out and designs
+the next measurement.** Nothing was optimized._
+
+## Why round 2's table said nothing
+
+All nine configurations on the M1 reported **58.8 fps / 17.0 ms**, identical to
+one decimal — including `field=off`, which stops drawing all 4,892 sprites, and
+`core=off`, which removes the raymarch. Two readings, both true:
+
+1. **58.8 fps / 17.0 ms is the vsync interval, quantised.** The median of
+   vsync-locked frames *is* exactly one refresh period, so nine identical rows
+   are expected and carry no information. They are not evidence that the flags
+   failed to apply.
+2. **A median cannot see jank.** A page can hold a 60 fps median through a
+   200 ms stall every few seconds and still report 58.8. Round 2 measured a
+   median, on an idle page, when the complaint is about *interacting*.
+
+## What round 3 measures
+
+Added to the harness, all still off by default: frame-time **distribution**
+(mean/median/p95/p99/max and counts over 20/33/50/100 ms), **long tasks** via
+`PerformanceObserver`, **input latency** via the Event Timing API (the direct
+measure of "feels laggy at 60 fps" — `processingStart − startTime`), and
+**per-code-path spans** timing `ingest`, the full-book revision walk,
+`Points.raycast` and the whole `LeadField` frame callback. Plus two repeatable
+scripted interactions: `?sweep=1` (pointer, hover/raycast) and `?sweep=drag`
+(button held, driving OrbitControls — the interaction a person actually
+performs, and the one round 3's first pass missed).
+
+Frame times from the measuring machine remain meaningless — every frame there
+is a long task because the software rasterizer saturates the main thread. **Span
+durations are pure JavaScript and do transfer.**
+
+## Measured code-path costs at 4,892 leads
+
+Medians across idle / pointer-sweep / drag-sweep runs, 10 s each:
+
+| path | mean | max | calls/s observed | implied at 60 fps on a fast CPU |
+|---|---|---|---|---|
+| `revisionWalk` (full book) | 1.71–2.05 ms | 5.8 ms | ~3.4 (frame-gated) | ~9/s → **~16 ms/s** |
+| `pointsRaycast` (all 4,892) | 0.094–0.103 ms | 1.9 ms | ~11 | ~60/s → ~6 ms/s |
+| `leadFieldFrame`, settled | 0.063 ms | 0.2 ms | every frame | ~4 ms/s |
+| `ingest` (incl. subscribers) | 0.039–0.056 ms | 0.8 ms | ~4.6 | ~9/s → ~0.5 ms/s |
+
+**Total ≈ 27 ms of JavaScript per wall-clock second — about 2.7% of one core.**
+
+### Three things now confirmed as facts rather than inferences
+
+- **The full-book revision walk is real.** 166,328 leads recalculated in 10 s to
+  service 50 events (`revisionWalks=34`, `leadsRecalculated=166,328`). One event
+  changes one lead; the walk recomputes `positionFor` and re-parses a colour
+  string for all of them. At 1.8–2.1 ms it is a genuine *tail* contributor
+  (~12% of a 16.7 ms frame budget when it lands) and **not** the cause of a
+  sustained grade-D experience.
+- **`THREE.Points` raycasting does scan every lead.** 596,824 points scanned
+  across 122 raycasts = exactly 4,892 per call, confirming the O(n) path with no
+  acceleration structure. At 0.094 ms it is **cheap at this book size** (it
+  would matter at 60k).
+- **The settled-field frame loop costs 0.063 ms.** The unconditional `O(count)`
+  loop is not a problem at 4,892 leads; `framesWithNoMovement` confirms it runs
+  on every frame while the field is visually still, and it still costs almost
+  nothing.
+
+## Conclusion: what this rules OUT
+
+At 4,892 leads, on a CPU of this class, **JavaScript cannot account for the
+owner's lag.** Specifically ruled out as primary:
+
+- **C. CPU/main-thread JS** — ~2.7% of one core, total.
+- **D. React reconciliation** — `ingest` measures 0.055 ms *including* every
+  synchronous Zustand subscriber it wakes.
+- **E. Three.js object updates** — `render()` CPU is 0.0–0.5 ms everywhere.
+- **Pointer raycasting** — real and O(n), but 0.1 ms per call here.
+- **The revision walk** — real and wasteful, but ~16 ms/s.
+- **B. Vertex/particle workload** and draw-call count — 29–45 draws, one
+  `Points` call for the book.
+
+And from round 2 on the owner's own hardware: **A (fill rate) and F
+(post-processing)** are not primary either — removing the field, the Core and
+the post chain changed the frame time by nothing.
+
+**So every candidate the current instruments can see has been eliminated.**
+That is a real result, and it means the next step is a different instrument,
+not another guess.
+
+## What is still unmeasured on the M1 — the next measurement
+
+The harness now reports everything needed; it simply has not been run there.
+**This is the action, and it is the owner's:**
+
+```
+http://localhost:4173/?jank=1&seconds=15        # idle: tail + long tasks
+http://localhost:4173/?sweep=1&seconds=15       # hover/raycast under pointer motion
+http://localhost:4173/?sweep=drag&seconds=15    # orbiting — the real interaction
+```
+
+Each prints a copyable block. The three outcomes and what each would mean:
+
+1. **p99/max large, long tasks present** → main-thread jank after all, and the
+   spans in the same report name the culprit directly. The revision walk is the
+   leading candidate in that branch.
+2. **Distribution clean but input-latency delay high** → the frame loop is fine
+   and the *input path* is not. That is a compositor/event-routing problem, and
+   the fix is in how pointer events are handled, not in the renderer.
+3. **Everything clean on the M1 too** → the lag is not where the app is looking,
+   and the next questions are environmental rather than architectural. Those
+   need answering before any more code is measured:
+   - **Was the grade-D experience on `npm run dev` or on the production
+     preview?** The dev server runs unminified React with StrictMode
+     double-invoking renders and effects; it is legitimately much slower, and it
+     would explain a bad experience that a production-build benchmark cannot
+     reproduce.
+   - Chrome or Safari? (Safari lacks `longtask`; the report says so rather than
+     printing zeros.)
+   - Low Power Mode, battery vs mains, external display, browser zoom, other
+     heavy tabs — each changes an M1 Air's behaviour substantially.
+
+## Honest status
+
+**A. Confirmed bottleneck:** none. Every measurable candidate is eliminated;
+the cause has not been found.
+**B. Evidence:** above — spans, counters, and the owner's own nine-row table.
+**C. Magnitude:** total JS ≈ 2.7% of one core at 4,892 leads.
+**D. Exact code path:** the only genuinely wasteful path found is
+`LeadField.useFrame`'s revision-gated full-book walk
+(`positionFor` + `THREE.Color.setStyle` per lead, ~9×/s) — real waste, wrong
+order of magnitude to be the cause.
+**E. Smallest safe fix:** deferred. Fixing the walk is worth doing on its own
+merits (round 1 items 3–4) but must not be sold as the cure.
+**F. Expected impact:** on the evidence, ~16 ms/s of a 1000 ms second at the
+default book — invisible to a human. Substantial only at 20k+ leads.
+**G. Risk:** none of the above touches visuals; the risk is doing it, seeing no
+improvement, and concluding performance work is hopeless. It is not hopeless —
+it is unlocated.

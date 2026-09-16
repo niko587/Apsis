@@ -22,27 +22,34 @@ The owner reports subjective grade **D** on a 2020 M1 MacBook Air. That is now
 the project's top priority. Round 1's hypothesis was refuted by real hardware;
 item 1 is the ~90-second run that ranks what is left.
 
-## 1. Run `?bench=1` on the M1 — BLOCKED on owner, ~90 seconds, decides the fix
-**What:** On the M1 MacBook Air, with the machine idle and a normal window:
+## 1. Run the jank/interaction probes on the M1 — BLOCKED on owner
+**What:** three runs, each printing a copyable block:
 ```
-http://localhost:4173/?bench=1                 # 4,892 leads, ~90s
-http://localhost:4173/?bench=1&leads=20000     # optional second pass
+http://localhost:4173/?jank=1&seconds=15        # idle: tail + long tasks
+http://localhost:4173/?sweep=1&seconds=15       # hover/raycast under pointer motion
+http://localhost:4173/?sweep=drag&seconds=15    # orbiting — the real interaction
 ```
-It walks nine configurations by itself and prints a copyable table. Check
-`chrome://gpu` first — **WebGL must say "Hardware accelerated"** — and note the
-GL_RENDERER string. Send the textarea contents back.
-**Why now:** the round-1 hypothesis (post-processing / fill rate) was **refuted**
-by the owner's own A/B: `?fx=off` gave only some improvement. The remaining
-suspects — sprite overdraw, the Core raymarch, CPU work, DPR — cannot be ranked
-on the measuring machine, because `?fx=off` there restores the full 60 fps cap
-and every subsequent row is pinned at vsync. On the Air they will separate.
-**Acceptance:** table pasted into `PERFORMANCE_BASELINE.md`; the largest
-adjacent jump names the bottleneck per the decision rules already written there
-(written in advance on purpose); round 1's section A formally closed.
-**Then, and only then:** implement the smallest fix the table points at. Every
-branch of those rules preserves the Lead Universe, the book size and the
-cinematic intent — none of them is "draw less of the product".
-**Model:** Opus. Fable only once the table says the fix is visual.
+**And answer one question that may make all of it moot:** was the grade-D
+experience on `npm run dev` or on the production preview? The dev server runs
+unminified React with StrictMode double-invoking renders and effects, and is
+legitimately much slower than the build the benchmarks measure.
+**Why now:** round 3 eliminated every candidate the current instruments can
+see — JS is ~2.7% of one core at 4,892 leads; React, the store, raycasting,
+draw calls and Three.js updates are all cheap; and round 2 already showed on
+the owner's own hardware that removing the field, the Core and the post chain
+changes nothing. The cause is real but **unlocated**, and round 2's
+58.8 fps / 17.0 ms was just the vsync interval quantised — a median cannot see
+jank or input latency. These three runs report p95/p99/max, frames over
+20/33/50/100 ms, long tasks, and Event Timing input delay.
+**Acceptance:** blocks pasted into `PERFORMANCE_BASELINE.md`; the branch taken
+(main-thread jank / input-path latency / environmental) recorded; only then is
+a fix chosen.
+**Model:** Opus. Fable only if the answer turns out to be visual.
+
+## 1-old. (closed) `?bench=1` on the M1 — RUN, median uninformative
+All nine configurations returned 58.8 fps / 17.0 ms, including `field=off` and
+`core=off`. That is the vsync interval quantised, not a finding. Recorded in
+`PERFORMANCE_BASELINE.md` round 3.
 
 ## 1a. (closed) The `fx=off` A/B — RUN, hypothesis refuted
 Result: normal FX difficult to use; `?fx=off` some improvement, still difficult.

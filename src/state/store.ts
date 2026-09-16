@@ -18,6 +18,7 @@ import { applyEvent, decayedScore, stageFor } from '../domain/scoring';
 import { seedAgents, seedLeads } from '../domain/seed';
 import { agentFor, taskDuration } from '../domain/agents';
 import { scheduleAppointment, withElapsedStatus, type Appointment } from '../domain/appointments';
+import { PROBE, bump, span } from '../diag/diagnostics';
 
 export interface Telemetry {
   total: number;
@@ -211,6 +212,9 @@ export const useApsis = create<ApsisState>((set, get) => ({
   taskRevision: 0,
 
   ingest: (event) => {
+    // Diagnostics only: `PROBE` is a module-level false in every normal run, so
+    // this is one branch on a constant and nothing else (round 3).
+    const probeT0 = PROBE ? performance.now() : 0;
     const { leads, feed } = get();
     const lead = leads.get(event.leadId);
     if (!lead) return;
@@ -257,6 +261,13 @@ export const useApsis = create<ApsisState>((set, get) => ({
       ),
       revision: s.revision + 1,
     }));
+
+    // Measures the store write AND every synchronous Zustand subscriber it
+    // wakes — React panels included — because `set()` notifies inline.
+    if (PROBE) {
+      span('ingest', performance.now() - probeT0);
+      bump('events');
+    }
   },
 
   startTask: (task) => {

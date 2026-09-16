@@ -19,7 +19,7 @@ import { Orchestrator } from './ui/Orchestrator';
 import { AppointmentCentre } from './ui/AppointmentCentre';
 import { SystemState } from './ui/SystemState';
 import { UniverseBoundary } from './ui/UniverseBoundary';
-import { DIAG, runBenchIfRequested } from './diag/diagnostics';
+import { DIAG, runBenchIfRequested, runJankIfRequested } from './diag/diagnostics';
 import { DiagOverlay } from './diag/DiagOverlay';
 import './App.css';
 
@@ -109,8 +109,8 @@ export default function App() {
     return () => source.stop();
   }, [live]);
 
-  // No-op without `?bench=1`.
-  useEffect(() => { runBenchIfRequested(); }, []);
+  // Both no-ops without their flags.
+  useEffect(() => { runBenchIfRequested(); runJankIfRequested(); }, []);
 
   return (
     <div className="app">

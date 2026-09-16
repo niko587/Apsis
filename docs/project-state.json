@@ -86,7 +86,7 @@
     "never rewrite published history on main without owner instruction (D19)"
   ],
   "blocked": [
-    { "what": "M1 fx=off A/B — decides whether the grade-D lag is GPU fill rate or JavaScript", "on": "owner's hardware (2020 M1 MacBook Air, fanless, dpr 2)", "ref": "NEXT_ACTIONS.md#1" }
+    { "what": "M1 jank/interaction probes (?jank=1, ?sweep=1, ?sweep=drag) + confirm dev-server vs production preview", "on": "owner's hardware (2020 M1 MacBook Air, fanless, dpr 2)", "ref": "NEXT_ACTIONS.md#1" }
   ],
   "performance": {
     "baseline": "docs/PERFORMANCE_BASELINE.md (2026-09-15)",
@@ -105,7 +105,10 @@
       "draw-call count (29-45 per frame at every book size)",
       "Three.js object-update cost (render() CPU is 0.3-0.5ms in EVERY configuration)"
     ],
-    "primary_bottleneck": "UNKNOWN on the M1 — not claimed without evidence; ?bench=1 on the Air decides it",
+    "round3": "bench median was the vsync interval quantised (58.8fps/17.0ms in all 9 configs, incl. field=off); added distribution p95/p99/max, >20/33/50/100ms buckets, longtask, Event Timing input latency, per-path spans, and scripted pointer + drag sweeps",
+    "measured_js_at_4892": "revisionWalk 1.7-2.1ms x ~9/s; Points.raycast 0.094ms scanning all 4892 (confirmed O(n), 596824 points / 122 calls); settled frame loop 0.063ms; ingest 0.055ms incl subscribers; TOTAL ~2.7% of one core",
+    "ruled_out_round3": ["CPU/main-thread JS", "React reconciliation", "Zustand store updates", "pointer raycasting (at 4892)", "the full-book revision walk (real waste, wrong magnitude)"],
+    "primary_bottleneck": "UNKNOWN — every candidate the instruments can see is eliminated; cause is real but unlocated. Next: ?jank=1 / ?sweep=1 / ?sweep=drag on the M1, and confirm dev-server vs production preview",
     "optimization_applied": "none"
   },
   "repo": {

@@ -174,10 +174,29 @@ no overlay). Two facts it already establishes: `render()` CPU time is
 object-update cost; and `feed=off` is worth ~22% even against a rasterizer that
 dwarfs it, which strengthens the case against the per-event full-book walk.
 
-**No primary bottleneck is claimed for the M1.** Next action is the owner
-running `?bench=1` on the Air — `NEXT_ACTIONS.md` item 1. The interpretation is
-written down in advance in `PERFORMANCE_BASELINE.md` so the data chooses the
-fix rather than the argument.
+**Round 3 (same day): the bench median was uninformative, and every candidate
+the instruments can see is now eliminated.** All nine M1 rows returned
+58.8 fps / 17.0 ms — the vsync interval quantised, which a median always is.
+Round 3 therefore measured the tail and the interaction instead: frame-time
+p95/p99/max and >20/33/50/100 ms buckets, `longtask`, Event Timing **input
+latency**, per-code-path spans, and scripted pointer *and drag* sweeps.
+
+Measured at 4,892 leads (pure JS, transfers between machines): full-book
+revision walk 1.7–2.1 ms × ~9/s, `Points.raycast` 0.094 ms (confirmed scanning
+all 4,892 — 596,824 points over 122 calls), settled frame loop 0.063 ms,
+`ingest` 0.055 ms including every synchronous subscriber. **Total ≈ 2.7% of one
+core** — JavaScript cannot account for the owner's lag at this book size.
+Ruled out as primary: CPU/JS, React reconciliation, Zustand, raycasting, the
+revision walk, draw calls, Three.js object updates — and, from the owner's own
+round-2 table, fill rate and post-processing.
+
+**No bottleneck is confirmed. The cause is real but unlocated**, which is a
+result, not a stall. Next action is the owner running `?jank=1`, `?sweep=1` and
+`?sweep=drag` on the Air — and confirming whether the grade-D experience was on
+`npm run dev` (unminified React + StrictMode double-invoke) or the production
+preview, which would explain a gap no production benchmark can reproduce.
+`PERFORMANCE_BASELINE.md` records the three possible outcomes and what each
+would mean, written before the data arrives.
 
 ## Known issues and unverified claims
 

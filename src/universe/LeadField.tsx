@@ -22,6 +22,7 @@ import { publishField } from './fieldHandle';
 import { useReducedMotion } from '../ui/useReducedMotion';
 import { matchesPath, type PathStep } from './clusters';
 import { readDrillPath } from '../state/drillStore';
+import { PROBE, bump, notePointerEvent, span } from '../diag/diagnostics';
 
 /**
  * How fast a lead slides to its new orbit, in "fraction of remaining distance
@@ -180,6 +181,32 @@ export function LeadField() {
     seeded.current = true;
   }
 
+  /**
+   * Round 3: time `Points.raycast` itself.
+   *
+   * three.js tests the ray against EVERY point in the geometry — there is no
+   * acceleration structure — so this is O(book) per call, and R3F invokes it
+   * from its pointer handling. Wrapping the instance method (rather than the
+   * prototype) keeps the measurement scoped to this object, and it is only
+   * installed under a diagnostic flag.
+   */
+  useEffect(() => {
+    if (!PROBE) return;
+    const points = pointsRef.current;
+    if (!points) return;
+    const original = points.raycast.bind(points);
+    points.raycast = (raycaster, intersects) => {
+      const t0 = performance.now();
+      original(raycaster, intersects);
+      span('pointsRaycast', performance.now() - t0);
+      bump('raycasts');
+      bump('pointsScanned', count);
+    };
+    return () => {
+      points.raycast = THREE.Points.prototype.raycast;
+    };
+  }, [count]);
+
   // Publish the live buffer so the agent arcs can terminate on each lead's
   // actual on-screen position rather than its target orbit.
   useEffect(() => {
@@ -195,6 +222,7 @@ export function LeadField() {
   const lastTrailVerts = useRef(0);
 
   useFrame((state, delta) => {
+    const probeT0 = PROBE ? performance.now() : 0;
     const points = pointsRef.current;
     const field = fieldRef.current;
     if (!points || !field) return;
@@ -225,6 +253,13 @@ export function LeadField() {
       lastRevision.current = revision;
       lastMatched.current = matched;
       lastDrill.current = drillPath;
+      // Round 3: how often the full-book walk actually runs, and over how many
+      // leads. One event changes one lead; this counts what it costs anyway.
+      if (PROBE) {
+        bump('revisionWalks');
+        bump('leadsRecalculated', order.length);
+      }
+      const walkT0 = PROBE ? performance.now() : 0;
       for (let i = 0; i < order.length; i++) {
         const lead = leads.get(order[i]);
         if (!lead) continue;
@@ -252,6 +287,7 @@ export function LeadField() {
       }
       geometry.getAttribute('aColor').needsUpdate = true;
       geometry.getAttribute('aSize').needsUpdate = true;
+      if (PROBE) span('revisionWalk', performance.now() - walkT0);
     }
 
     // Frame-rate independent approach to the target. Under reduced motion the
@@ -363,10 +399,19 @@ export function LeadField() {
         marker.quaternion.copy(state.camera.quaternion);
       }
     }
+
+    if (PROBE) {
+      span('leadFieldFrame', performance.now() - probeT0);
+      // The settled-field question: this loop is O(count) unconditionally, so
+      // counting the frames where nothing actually moved says how much of it
+      // was wasted.
+      if (!moved) bump('framesWithNoMovement');
+    }
   });
 
   const onMove = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
+      notePointerEvent();
       e.stopPropagation();
       const i = e.index;
       if (i === undefined) return;
