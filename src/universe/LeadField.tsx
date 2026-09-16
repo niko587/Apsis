@@ -22,7 +22,7 @@ import { publishField } from './fieldHandle';
 import { useReducedMotion } from '../ui/useReducedMotion';
 import { matchesPath, type PathStep } from './clusters';
 import { readDrillPath } from '../state/drillStore';
-import { PROBE, bump, notePointerEvent, span } from '../diag/diagnostics';
+import { PROBE, bump, noteInputToSubmit, notePointerEvent, span } from '../diag/diagnostics';
 
 /**
  * How fast a lead slides to its new orbit, in "fraction of remaining distance
@@ -412,6 +412,10 @@ export function LeadField() {
   const onMove = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
       notePointerEvent();
+      // Input -> handler latency. `event.timeStamp` shares performance.now()'s
+      // timebase, so this is the age of the input by the time Apsis reacts to
+      // it. It stops short of presentation, which JS cannot see.
+      if (PROBE && e.nativeEvent) noteInputToSubmit(performance.now() - e.nativeEvent.timeStamp);
       e.stopPropagation();
       const i = e.index;
       if (i === undefined) return;

@@ -86,7 +86,7 @@
     "never rewrite published history on main without owner instruction (D19)"
   ],
   "blocked": [
-    { "what": "M1 dev-vs-production A/B (?jank=1 and ?sweep=drag on :5173 vs :4173) + confirm everyday port, Chrome vs Safari, power/display state", "on": "owner's hardware (2020 M1 MacBook Air, fanless, dpr 2)", "ref": "NEXT_ACTIONS.md#1" }
+    { "what": "Safari ?backdrop=off A/B (decisive, ~1min) + Safari-vs-Chrome ?sweep=drag", "on": "owner's hardware (2020 M1 MacBook Air, Safari, dpr 2)", "ref": "NEXT_ACTIONS.md#1" }
   ],
   "performance": {
     "baseline": "docs/PERFORMANCE_BASELINE.md (2026-09-15)",
@@ -114,7 +114,16 @@
       "installLongTaskObserver reports count=0 when observe() throws — Safari has PerformanceObserver but not the longtask entry type, so every '0 long tasks' reading is a FALSE NEGATIVE on Safari",
       "the jank report header does not record build mode (dev vs production), so two pasted reports are indistinguishable without manual labelling"
     ],
-    "primary_bottleneck": "UNKNOWN — production measures healthy on the owner's hardware; subjective grade D stands unexplained. Next: dev-vs-production A/B on the M1 plus environment questions (port, browser, power state)",
+    "round5": "owner is on SAFARI; dev == production subjectively, retiring the build-mode hypothesis. Enumerated the full graphics/compositor stack and found FOUR backdrop-filter:blur() elements layered directly over the live WebGL canvas (.command-row and .command-out at 14px, .uv-clusters and .uv-skills at 6px)",
+    "leading_hypothesis": "CSS backdrop-filter compositing over the WebGL canvas — work that happens AFTER requestAnimationFrame returns and is invisible to every instrument here. First hypothesis consistent with ALL evidence: JS cheap, frame intervals perfect, fx=off partial, field=off/core=off making no difference (a backdrop blur costs the same regardless of what is behind it), dev==prod, Safari-specific severity. UNTESTED — ?backdrop=off decides it in ~1 minute",
+    "not_observable_from_js": "true presentation time (pixels on glass) in Safari: no frame-timing API, no long-animation-frame, no EXT_disjoint_timer_query_webgl2. GL execution, WebKit compositing, backdrop-filter evaluation and the vsync handoff are all invisible. Best proxies added: polled WebGL2 fenceSync, rAF lateness, input->handler latency",
+    "diagnostic_fixes_round5": [
+      "longtask false negative FIXED — Safari now prints 'LONGTASK OBSERVER UNSUPPORTED', never 'count=0'",
+      "BUILD MODE (development/production) now printed in every report via import.meta.env.DEV",
+      "capability line: longtask, eventTiming, gpuTimerQuery, fenceSync, GL version, renderer string",
+      "?backdrop=off and ?overlay=off toggles, injected as a runtime <style> because the CSS minifier rewrote an authored backdrop-filter override to -webkit- only (would have silently disabled the test in Chrome); shipping stylesheets byte-identical"
+    ],
+    "primary_bottleneck": "UNKNOWN — one strong untested hypothesis (backdrop-filter compositing). Decided by the Safari ?backdrop=off A/B",
     "optimization_applied": "none"
   },
   "repo": {

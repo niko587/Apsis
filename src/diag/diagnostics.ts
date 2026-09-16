@@ -160,9 +160,12 @@ const median = (a: number[]) => {
  * execution directly and the inference above is not needed. Chrome often
  * withholds it, so the app must not depend on it being there.
  */
+let probedRenderer: THREE.WebGLRenderer | null = null;
+
 export function installRenderProbe(gl: THREE.WebGLRenderer): void {
   if (installed || !DIAG_ACTIVE) return;
   installed = true;
+  probedRenderer = gl;
 
   const original = gl.render.bind(gl);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -179,9 +182,31 @@ export function installRenderProbe(gl: THREE.WebGLRenderer): void {
   const ext = ctx.getExtension('EXT_disjoint_timer_query_webgl2');
   let query: WebGLQuery | null = null;
 
+  // WebGL2 fence: the closest JS can get to "the GPU finished this frame".
+  // Chrome withholds EXT_disjoint_timer_query_webgl2 and WebKit never shipped
+  // it, so a polled fence is the only cross-browser GPU-completion signal.
+  let fence: WebGLSync | null = null;
+  let fenceAt = 0;
+
   let last = performance.now();
-  const tick = () => {
+  const tick = (scheduled?: number) => {
     const now = performance.now();
+    if (scheduled !== undefined) noteRafLateness(scheduled);
+
+    if (typeof ctx.fenceSync === 'function') {
+      if (fence) {
+        const st = ctx.clientWaitSync(fence, 0, 0);
+        if (st === ctx.ALREADY_SIGNALED || st === ctx.CONDITION_SATISFIED) {
+          noteGpuFence(now - fenceAt);
+          ctx.deleteSync(fence);
+          fence = null;
+        }
+      }
+      if (!fence) {
+        fence = ctx.fenceSync(ctx.SYNC_GPU_COMMANDS_COMPLETE, 0);
+        fenceAt = now;
+      }
+    }
     push(ring.frame, now - last);
     push(ring.render, renderAccum);
     // Round 3: the full distribution, not just the ring's median.
@@ -407,6 +432,15 @@ const counters = new Map<string, number>();
 /** Every frame interval in the sampling window — the whole distribution, not a summary. */
 let frameLog: number[] = [];
 let longTasks: { count: number; totalMs: number; maxMs: number } = { count: 0, totalMs: 0, maxMs: 0 };
+/**
+ * Whether `observe({entryTypes:['longtask']})` actually succeeded.
+ *
+ * Correctness defect found in round 4: Safari implements `PerformanceObserver`
+ * but NOT the `longtask` entry type, so the observer throws and the counters
+ * stay at zero — which printed as "0 long tasks" and reads as "no jank" when it
+ * means "cannot see jank". A measurement that cannot fail is not a measurement.
+ */
+let longTaskSupported = false;
 let pointerEvents = 0;
 let logging = false;
 
@@ -447,8 +481,9 @@ export function installLongTaskObserver(): void {
       }
     });
     obs.observe({ entryTypes: ['longtask'] });
+    longTaskSupported = true;
   } catch {
-    /* Safari and older Chrome do not implement longtask; the report says so. */
+    longTaskSupported = false; // Safari: reported explicitly, never as zero.
   }
 }
 
@@ -499,7 +534,7 @@ export function distribution(): Distribution {
 export function jankReport(seconds: number) {
   return {
     distribution: distribution(),
-    longTasks: typeof PerformanceObserver === 'undefined' ? null : longTasks,
+    longTasks: longTaskSupported ? longTasks : null,
     pointerEventsPerSec: pointerEvents / seconds,
     spans: [...spans.entries()]
       .map(([name, s]) => ({
@@ -574,6 +609,7 @@ export function runJankIfRequested(): void {
   window.setTimeout(() => {
     startJankLog();
     resetInputLatency();
+    resetPresentation();
     const mode = drag ? 'DRAG SWEEP (orbiting)' : SWEEP ? 'POINTER SWEEP (interacting)' : 'idle';
     const done = () => renderJankReport(jankReport(seconds), mode);
     if (drag) runDragSweep(seconds * 1000).then(done);
@@ -593,6 +629,39 @@ function renderJankReport(r: ReturnType<typeof jankReport>, mode: string): void 
       `window=${window.innerWidth}x${window.innerHeight}`,
   );
   lines.push(`ua=${navigator.userAgent}`);
+  const c = readCapabilities(probedRenderer ?? undefined);
+  lines.push(`BUILD MODE = ${c.buildMode.toUpperCase()}   (no longer inferred from the port)`);
+  lines.push(
+    `capabilities: longtask=${c.longtask ? 'yes' : 'NO'} eventTiming=${c.eventTiming ? 'yes' : 'NO'} ` +
+      `gpuTimerQuery=${c.timerQuery ? 'yes' : 'NO'} fenceSync=${c.fenceSync ? 'yes' : 'NO'}`,
+  );
+  lines.push(`gl: ${c.webglVersion} | renderer: ${c.webglRenderer}`);
+  const backdropOff = document.documentElement.classList.contains('diag-no-backdrop');
+  const overlayOff = document.documentElement.classList.contains('diag-no-overlay');
+  lines.push(`css: backdrop-filter=${backdropOff ? 'DISABLED (diag)' : 'on'} overlays=${overlayOff ? 'HIDDEN (diag)' : 'on'}`);
+  lines.push('');
+  const pr = presentation();
+  lines.push('PRESENTATION PATH (as close as JS can get; see notes)');
+  lines.push(
+    `  rAF lateness      median=${pr.rafLateness.median.toFixed(1)}ms p95=${pr.rafLateness.p95.toFixed(1)}ms ` +
+      `max=${pr.rafLateness.max.toFixed(1)}ms  (n=${pr.rafLateness.n})`,
+  );
+  lines.push(
+    pr.gpuFence.n === 0
+      ? '  GPU fence         unavailable (no WebGL2 fenceSync)'
+      : `  GPU fence         median=${pr.gpuFence.median.toFixed(1)}ms p95=${pr.gpuFence.p95.toFixed(1)}ms ` +
+        `max=${pr.gpuFence.max.toFixed(1)}ms  (n=${pr.gpuFence.n})`,
+  );
+  lines.push(
+    pr.inputToSubmit.n === 0
+      ? '  input->submit     no samples'
+      : `  input->submit     median=${pr.inputToSubmit.median.toFixed(1)}ms p95=${pr.inputToSubmit.p95.toFixed(1)}ms ` +
+        `max=${pr.inputToSubmit.max.toFixed(1)}ms  (n=${pr.inputToSubmit.n})`,
+  );
+  lines.push('  NOTE: true presentation time (pixels on glass) is NOT observable');
+  lines.push('  from JavaScript in Safari. No frame-timing API, no GPU timer query.');
+  lines.push('  Compositing — including backdrop-filter over the canvas — happens');
+  lines.push('  after rAF returns and is measured by NONE of the above.');
   lines.push('');
   lines.push('FRAME TIME DISTRIBUTION (ms)');
   lines.push(
@@ -607,7 +676,9 @@ function renderJankReport(r: ReturnType<typeof jankReport>, mode: string): void 
   lines.push('LONG TASKS (main thread >=50ms)');
   lines.push(
     lt === null
-      ? '  PerformanceObserver longtask unsupported in this browser'
+      ? '  LONGTASK OBSERVER UNSUPPORTED in this browser — this is NOT "zero long tasks".' +
+        '\n  Safari has PerformanceObserver but not the longtask entry type; main-thread' +
+        '\n  blocking is simply invisible here. Use Web Inspector > Timelines > Rendering Frames.'
       : `  count=${lt.count}  total=${lt.totalMs.toFixed(0)}ms  max=${lt.maxMs.toFixed(0)}ms`,
   );
   lines.push('');
@@ -750,4 +821,171 @@ export function runDragSweep(durationMs: number): Promise<void> {
     };
     requestAnimationFrame(step);
   });
+}
+
+/* ------------------------------------- round 5: presentation & capability --- */
+
+/**
+ * Round 5 exists because the owner runs **Safari on an M1 Air**, both dev and
+ * production feel equally bad, and the production build measures healthy:
+ * 901 drag frames, p99 23 ms, zero frames over 33 ms. Every previous round
+ * measured JavaScript. None of them could see what happens after
+ * `requestAnimationFrame` returns.
+ *
+ * What is between a rendered frame and a visible pixel:
+ *   input → OrbitControls → camera matrix → useFrame → renderer.render()
+ *   → [ GL command submission → GPU execution → WebKit compositing,
+ *       including any backdrop-filter that samples the canvas → presentation ]
+ *
+ * Everything inside the brackets is invisible to `performance.now()`. rAF keeps
+ * firing on the vsync cadence whether or not the pixels it produced ever
+ * reached the screen on time — which is exactly how a page measures 60 fps and
+ * feels bad.
+ *
+ * These probes get as close to the bracket as the platform allows, and report
+ * honestly which ones the current browser actually supports.
+ */
+
+export interface Capabilities {
+  buildMode: string;
+  longtask: boolean;
+  eventTiming: boolean;
+  /** Chrome-only; WebKit does not expose it. Without it, no true GPU timing. */
+  timerQuery: boolean;
+  /** WebGL2 core — available in Safari 15+, and our best GPU-completion signal. */
+  fenceSync: boolean;
+  webglRenderer: string;
+  webglVersion: string;
+}
+
+let caps: Capabilities | null = null;
+
+export function readCapabilities(gl?: THREE.WebGLRenderer): Capabilities {
+  if (caps) return caps;
+  let timerQuery = false;
+  let fenceSync = false;
+  let webglRenderer = 'unknown';
+  let webglVersion = 'unknown';
+  try {
+    const ctx = gl?.getContext() as WebGL2RenderingContext | undefined;
+    if (ctx) {
+      timerQuery = !!ctx.getExtension('EXT_disjoint_timer_query_webgl2');
+      fenceSync = typeof ctx.fenceSync === 'function';
+      webglVersion = String(ctx.getParameter(ctx.VERSION));
+      const dbg = ctx.getExtension('WEBGL_debug_renderer_info');
+      if (dbg) webglRenderer = String(ctx.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
+      else webglRenderer = 'masked (WEBGL_debug_renderer_info withheld)';
+    }
+  } catch { /* context lost or unavailable */ }
+
+  let eventTiming = false;
+  try {
+    // Presence in supportedEntryTypes is the only non-throwing way to ask.
+    const types = (PerformanceObserver as unknown as { supportedEntryTypes?: string[] })
+      .supportedEntryTypes;
+    eventTiming = Array.isArray(types) && types.includes('event');
+  } catch { /* older engines */ }
+
+  caps = {
+    buildMode: import.meta.env.DEV ? 'development' : 'production',
+    longtask: longTaskSupported,
+    eventTiming,
+    timerQuery,
+    fenceSync,
+    webglRenderer,
+    webglVersion,
+  };
+  return caps;
+}
+
+/** Presentation-adjacent samples. All optional; unsupported ones stay empty. */
+const rafLateness: number[] = [];
+const gpuFence: number[] = [];
+const inputToSubmit: number[] = [];
+
+/**
+ * How late the frame callback ran relative to the frame's own timestamp.
+ *
+ * `requestAnimationFrame(t)` receives the time the frame was *scheduled*. If
+ * `performance.now()` on entry is far past `t`, the main thread started the
+ * frame late — the one piece of pre-presentation delay JS can see directly, and
+ * it works in every browser including Safari.
+ */
+export function noteRafLateness(scheduled: number): void {
+  if (!PROBE) return;
+  const late = performance.now() - scheduled;
+  if (Number.isFinite(late)) rafLateness.push(late);
+}
+
+export function noteGpuFence(ms: number): void {
+  gpuFence.push(ms);
+}
+
+export function noteInputToSubmit(ms: number): void {
+  if (PROBE && Number.isFinite(ms) && ms >= 0) inputToSubmit.push(ms);
+}
+
+const pct = (a: number[], q: number) => {
+  if (!a.length) return 0;
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.floor(s.length * q))];
+};
+
+export function presentation() {
+  return {
+    rafLateness: { n: rafLateness.length, median: pct(rafLateness, 0.5), p95: pct(rafLateness, 0.95), max: rafLateness.length ? Math.max(...rafLateness) : 0 },
+    gpuFence: { n: gpuFence.length, median: pct(gpuFence, 0.5), p95: pct(gpuFence, 0.95), max: gpuFence.length ? Math.max(...gpuFence) : 0 },
+    inputToSubmit: { n: inputToSubmit.length, median: pct(inputToSubmit, 0.5), p95: pct(inputToSubmit, 0.95), max: inputToSubmit.length ? Math.max(...inputToSubmit) : 0 },
+  };
+}
+
+export function resetPresentation(): void {
+  rafLateness.length = 0;
+  gpuFence.length = 0;
+  inputToSubmit.length = 0;
+}
+
+/**
+ * `?backdrop=off` — the decisive test for CSS compositing over the canvas.
+ *
+ * Four elements sit on top of the live WebGL surface with `backdrop-filter:
+ * blur()`: the command row and its output panel (14px) and the two Universe
+ * overlays (6px). A backdrop filter makes the compositor sample what is behind
+ * the element, blur it, and composite — every frame, with the canvas as the
+ * source. That work happens after rAF returns, so it is invisible to every
+ * instrument in this file, and WebKit's path for it is materially worse than
+ * Chrome's.
+ *
+ * This toggle only sets a class; the rule lives in App.css. Default is ON —
+ * shipping visuals are untouched unless the flag is present.
+ */
+export function applyBackdropFlag(): void {
+  if (typeof document === 'undefined') return;
+  const q = new URLSearchParams(window.location.search);
+  const noBackdrop = q.get('backdrop') === 'off';
+  const noOverlay = q.get('overlay') === 'off';
+  if (!noBackdrop && !noOverlay) return;
+
+  // Injected at runtime rather than written into App.css, because the CSS
+  // minifier rewrites `backdrop-filter` declarations: an authored
+  // prefixed+unprefixed pair came out of the build as `-webkit-` only, which
+  // would have disabled this toggle in Chrome and silently invalidated the
+  // whole cross-browser comparison. An injected stylesheet is never minified.
+  // The shipping stylesheets are untouched.
+  const rules: string[] = [];
+  if (noBackdrop) {
+    document.documentElement.classList.add('diag-no-backdrop');
+    rules.push(
+      '.command-row,.command-out,.uv-clusters,.uv-skills{' +
+        'backdrop-filter:none !important;-webkit-backdrop-filter:none !important}',
+    );
+  }
+  if (noOverlay) {
+    document.documentElement.classList.add('diag-no-overlay');
+    rules.push('.uv-overlay,.command,.center-readout,.canvas-hint{display:none !important}');
+  }
+  const style = document.createElement('style');
+  style.setAttribute('data-diag', 'true');
+  style.textContent = rules.join('\n');
+  document.head.appendChild(style);
 }

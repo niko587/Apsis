@@ -697,3 +697,178 @@ using `import.meta.env.MODE`; deferred for the same scope reason.
 No bottleneck confirmed. No optimization implemented. The production build on
 the owner's M1 measures healthy; dev measures ~1.9× the long-task load; the
 owner's subjective report is unexplained and stands.
+
+---
+
+# Round 5: Safari, WebGL and the compositor
+
+_2026-09-15. Owner runs **Safari on the M1 Air**; dev and production feel
+equally bad, which retires the build-mode hypothesis. No optimization. The
+shipping stylesheets and visuals are unchanged._
+
+## A. The complete graphics/compositor pipeline
+
+**Renderer** (`src/universe/Universe.tsx`): `<Canvas>` from R3F 9.7 over
+three 0.186. `dpr={[1,2]}` (2 on the owner's Retina display),
+`antialias: false`, `alpha: false`, `powerPreference: 'high-performance'`.
+Tone mapping is `NoToneMapping` on the renderer when FX is on (ACES runs
+inside the composer instead), `ACESFilmicToneMapping` when FX is off.
+`FogExp2`. `raycaster.params.Points.threshold = 0.13`.
+
+**Scene**: `StageRings` (7 additive ring meshes, `depthWrite:false`,
+`DoubleSide`), `LeadField` (one `THREE.Points`, custom shaders,
+`AdditiveBlending`, `transparent:true`, `depthWrite:false` — **no early-z, full
+overdraw**; plus one `LineSegments` for trails and a billboarded marker with
+`depthTest:false`), `AgentNetwork` (arc line segments), `SkillRing`,
+`IntelligenceCore` (icosahedron, raymarched fragment shader, 16 steps × 3-octave
+fbm ≈ 384 hash evaluations per fragment, `AdditiveBlending`, `depthWrite:false`,
+plus a `pointLight`).
+
+**Post**: `EffectComposer multisampling={0}` → `Bloom` (`mipmapBlur`,
+`levels={5}`, `intensity 0.62`, threshold 0.5, radius 0.5) → `ToneMapping`
+(ACES). Half-float buffer. Disabled entirely by `?fx=off`.
+
+**Frame loop**: R3F's default `frameloop="always"` — rAF every frame regardless
+of change; no `invalidate()`/demand mode. Five `useFrame` subscribers
+(LeadField, Core, AgentNetwork, SkillRing, CameraRig, CameraKeys), all priority
+0 so R3F still owns rendering. `OrbitControls` with `enableDamping`,
+`dampingFactor 0.06`, `makeDefault`.
+
+**DOM above the canvas** — the part every previous round ignored.
+`.stage` is `position:relative`; `.canvas-wrap` is `position:absolute; inset:0`.
+Layered over it:
+
+| element | effect |
+|---|---|
+| `.command-row` (`App.css:321`) | **`backdrop-filter: blur(14px)`**, up to 760px wide |
+| `.command-out` (`App.css:363`) | **`backdrop-filter: blur(14px)`** |
+| `.uv-clusters` (`overlay.css:23`) | **`backdrop-filter: blur(6px)`** |
+| `.uv-skills` (`overlay.css:23`) | **`backdrop-filter: blur(6px)`** |
+| `.center-readout`, `.canvas-hint` | `pointer-events:none`, text-shadow |
+| `.uv-overlay` | `z-index:3`, `pointer-events:none` wrapper |
+
+`.command` also carries `transform: translateX(-50%)`, which promotes it to its
+own composited layer.
+
+## The leading hypothesis: backdrop-filter over a live WebGL canvas
+
+`backdrop-filter` requires the compositor to sample what is behind the element,
+blur it, and composite the result — **every frame, with the WebGL canvas as the
+source**. That work happens *after* `requestAnimationFrame` returns.
+
+It is the first hypothesis that explains **all** the surviving evidence:
+
+- JS is cheap (~2.7% of a core) — the cost is not in JS. ✓
+- Frame intervals look perfect (p99 23 ms, zero frames >33 ms) — rAF is not
+  gated on compositing. ✓
+- `fx=off` helps "somewhat" but does not fix it — bloom reduces what feeds the
+  blur; the blur remains. ✓
+- `field=off` and `core=off` changed nothing — **a backdrop blur costs the same
+  regardless of what is behind it**. ✓ (This is why every subtractive toggle in
+  round 2 came back identical: none of them removed a DOM overlay.)
+- Dev and production feel identical — the CSS is identical in both. ✓
+- Safari-specific severity — WebKit's backdrop-filter-over-canvas path is
+  materially worse than Chrome's. ✓
+
+**It is a hypothesis, not a finding.** It has not been tested on the owner's
+machine. The test is one URL and takes a minute.
+
+## B. What IS observable from JavaScript
+
+Frame intervals and their full distribution; main-thread long tasks (Chrome
+only); Event Timing input delay; every Apsis code path (`ingest`, the revision
+walk, `Points.raycast`, the frame callback); `renderer.render()` CPU duration;
+draw calls / points / triangles; rAF lateness (`performance.now()` minus the
+rAF timestamp); and **GPU completion via a polled WebGL2 fence**
+(`fenceSync` + `clientWaitSync`), newly added — the only cross-browser
+GPU-side signal available.
+
+## C. What is NOT observable from JavaScript
+
+**Actual presentation — when pixels reach the glass — cannot be measured from
+JS in Safari.** There is no frame-timing API, no `long-animation-frame`, and no
+GPU timer query. Specifically invisible: GL command execution on the GPU,
+WebKit's compositing pass, **backdrop-filter evaluation**, layer promotion and
+readback, and the final present/vsync handoff. A frame can be submitted on time
+and presented late, and nothing in this repo would know.
+
+Stating that plainly rather than inventing a number is the point: the fence
+probe is a *proxy* for GPU completion, not a presentation timestamp.
+
+## D. Safari-specific limitations (verified by capability probe, not assumed)
+
+- `EXT_disjoint_timer_query_webgl2` — **not exposed by WebKit**. No true GPU
+  timing.
+- `PerformanceObserver` `longtask` — **not implemented**. This produced the
+  round-3/4 false negative.
+- Event Timing (`event` entry type) — reported by the probe rather than assumed.
+- `WEBGL_debug_renderer_info` — often masked; the probe prints whatever it gets.
+- `requestVideoFrameCallback` — **`<video>` only, irrelevant to canvas**. It is
+  not a presentation clock for WebGL.
+- The real instrument for the invisible half is **Safari Web Inspector →
+  Timelines → Rendering Frames**, which attributes Script / Layout / Paint /
+  Composite per frame, and macOS Instruments (Metal System Trace) for GPU.
+
+## E. Diagnostic correctness fixes made
+
+1. **`longtask` false negative fixed.** `longTaskSupported` is now set only
+   when `observe()` actually succeeds. Safari now prints
+   `LONGTASK OBSERVER UNSUPPORTED … this is NOT "zero long tasks"`, with a
+   pointer to Web Inspector. Every earlier "0 long tasks" from Safari must be
+   read as "could not see".
+2. **Build mode in every report** — `BUILD MODE = DEVELOPMENT|PRODUCTION` from
+   `import.meta.env.DEV`, no longer inferred from the port.
+3. **Capability line** — `longtask`, `eventTiming`, `gpuTimerQuery`,
+   `fenceSync`, GL version and renderer string.
+4. **Presentation section** — rAF lateness, GPU fence latency, input→handler
+   latency, each with an explicit "unavailable" state, and a standing note that
+   true presentation time is not observable.
+5. **`?backdrop=off` and `?overlay=off`** toggles.
+
+**A minifier bug caught during validation, worth recording:** authoring the
+override as a prefixed+unprefixed pair in `App.css` produced a bundle
+containing **only** `-webkit-backdrop-filter`, which would have worked in
+Safari and silently done nothing in Chrome — invalidating the very
+cross-browser comparison it exists for. A first fix routing the blur through a
+CSS custom property was worse: the minifier then dropped the unprefixed
+declaration from the *shipping* rule, removing the blur in Chrome altogether.
+Both were caught by reading the built CSS and the computed style rather than
+trusting the source. The toggle is now injected as a runtime `<style>` element,
+which nothing minifies, and **the shipping stylesheets are byte-identical to
+before this round**.
+
+## F. The owner's test
+
+Rebuild first (`npm run build`), then — **same machine, same bundle, same
+window size, same lead count, same duration**:
+
+**1. Safari, the decisive one (~1 minute):**
+```
+http://localhost:4173/                 # baseline: drag the universe, note the feel
+http://localhost:4173/?backdrop=off    # identical, minus four backdrop blurs
+```
+Drag the field around in each for ~20 seconds. **Judge subjectively** — this
+test is about feel, not numbers. The blurs are cosmetic; nothing else differs.
+
+**2. Safari vs Chrome, production, apples-to-apples:**
+```
+http://localhost:4173/?sweep=drag&seconds=15
+```
+Run in **both** browsers, same window size. Record the pasted block *and* rate
+the subjective smoothness of dragging in each.
+
+## G. Decision tree
+
+| Result | Meaning | Next action |
+|---|---|---|
+| `?backdrop=off` feels **markedly better** in Safari | **Confirmed: CSS compositing over the canvas.** | Smallest fix: drop or soften the blur on the four overlays, or lift them out of the canvas's compositing path. Cosmetic change only — the Lead Universe, book size, Core and FX are untouched. |
+| `backdrop=off` no better, **Chrome much smoother** | Safari/WebKit rendering or compositor, not our CSS. | Reduce WebKit's compositing burden: canvas sizing/DPR tier, `alpha:false` already set, consider `desynchronized` context; and profile in Web Inspector → Rendering Frames. |
+| `backdrop=off` no better, **Chrome equally bad** | Not Safari-specific and not our CSS. | Falls to GPU work invisible to JS. Next instrument is macOS Instruments (Metal System Trace) plus the fence numbers at 2 viewport sizes to test fill-rate scaling directly. |
+| Fence p95 **large** in the pasted block | GPU is behind, whatever the frame interval says. | Fill-rate work becomes justified — and only then. |
+| Everything clean and Safari still feels bad | Presentation cadence differs from rAF. | Web Inspector Rendering Frames is the only remaining instrument; JS has been exhausted. |
+
+## H. Status
+
+No bottleneck confirmed. One strong, untested hypothesis with a one-minute
+decisive test. Nothing optimized, no visuals altered, no feature removed, the
+4,892-lead book and the Core intact.

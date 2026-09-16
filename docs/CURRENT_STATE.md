@@ -219,6 +219,37 @@ action is the dev-vs-production A/B on the Air plus three environment questions
 (everyday port, Chrome vs Safari, power/display state) — `NEXT_ACTIONS.md`
 item 1.
 
+**Round 5: owner is on Safari; dev ≡ production subjectively, retiring the
+build-mode hypothesis.** Enumerated the full graphics/compositor stack and
+found what every previous round ignored: **four elements layered directly over
+the live WebGL canvas carry `backdrop-filter: blur()`** — `.command-row` and
+`.command-out` at 14px (`App.css:321,363`), `.uv-clusters` and `.uv-skills` at
+6px (`overlay.css:23`). A backdrop filter makes the compositor sample what is
+behind it, blur it and composite — every frame, canvas as source, **after
+`requestAnimationFrame` returns**, where no instrument in this repo can see it.
+
+It is the first hypothesis consistent with *all* surviving evidence: JS cheap
+(~2.7% of a core), frame intervals perfect (p99 23 ms, zero frames >33 ms),
+`fx=off` partial, `field=off`/`core=off` making no difference (**a backdrop
+blur costs the same regardless of what is behind it** — which is precisely why
+every round-2 toggle returned identical numbers), dev ≡ production (same CSS),
+and Safari-specific severity. **It is untested**; `?backdrop=off` decides it in
+about a minute.
+
+Diagnostic correctness fixes: the `longtask` false negative is gone (Safari now
+prints "LONGTASK OBSERVER UNSUPPORTED", never `count=0`), reports carry
+**BUILD MODE** and a capability line (`longtask`, `eventTiming`,
+`gpuTimerQuery`, `fenceSync`, GL renderer), and a presentation section reports
+rAF lateness, polled **WebGL2 fence** GPU-completion latency and input→handler
+latency — with a standing note that **true presentation time is not observable
+from JS in Safari** (no frame-timing API, no timer query).
+
+Shipping stylesheets and visuals are byte-identical; the toggles inject a
+runtime `<style>` because the CSS minifier rewrote an authored override to
+`-webkit-` only, which would have silently disabled the test in Chrome.
+
+Next action: the Safari `?backdrop=off` A/B — `NEXT_ACTIONS.md` item 1.
+
 ## Known issues and unverified claims
 
 - **Performance is unverified on real hardware.** README's 60 FPS table

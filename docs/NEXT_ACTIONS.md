@@ -22,36 +22,42 @@ The owner reports subjective grade **D** on a 2020 M1 MacBook Air. That is now
 the project's top priority. Round 1's hypothesis was refuted by real hardware;
 item 1 is the ~90-second run that ranks what is left.
 
-## 1. Dev-vs-production A/B on the M1, and three environment questions — BLOCKED on owner
-**What:** two runs against the **dev** server, to compare with the production
-numbers already collected:
+## 1. Safari `?backdrop=off` A/B — BLOCKED on owner, ~1 minute, decisive
+**What:** rebuild (`npm run build`), then in **Safari**, drag the Lead Universe
+for ~20s in each and judge by feel:
 ```
-npm run dev                                  # -> http://localhost:5173
-http://localhost:5173/?jank=1&seconds=15
-http://localhost:5173/?sweep=drag&seconds=15
+http://localhost:4173/                 # baseline
+http://localhost:4173/?backdrop=off    # identical, minus four backdrop blurs
 ```
-Label each block (the report does not yet record build mode), and answer:
-1. **Which port is the everyday one?** If the grade-D experience is on `:5173`,
-   that is the explanation and the remedy is "run the production build".
-2. **Chrome or Safari?** Safari implements `PerformanceObserver` but not the
-   `longtask` entry type, so every "0 long tasks" line so far is a **false
-   negative** on Safari. If Safari, the next measurement is a Web Inspector
-   timeline, not this harness.
-3. **Battery or mains, Low Power Mode, external display, browser zoom?** Each
-   materially changes a fanless M1 Air and none is visible to the harness.
-**Why now:** the production build measures *healthy* on the owner's M1 — drag
-sweep 901 frames, zero over 33 ms, zero long tasks, p99 23 ms — while the owner
-still reports grade D. Measured on the same machine with the same harness, dev
-carries **~1.9× the main-thread long-task load** (188–196 vs 100–106 tasks),
-and that penalty appears in **no instrumented span**, because the spans time
-Apsis's own code paths while the dev cost lands in React's render work. A dev
-session can therefore feel much worse while every span reads normal.
-**Acceptance:** dev blocks pasted into `PERFORMANCE_BASELINE.md` beside the
-production ones; browser and power state recorded; the branch taken written
-down. Only then is any fix chosen.
-**Model:** Opus. Fable not until the answer is known to be visual.
+Then the cross-browser block, **same window size**, in Safari AND Chrome:
+```
+http://localhost:4173/?sweep=drag&seconds=15
+```
+**Why now:** four elements sit directly over the live WebGL canvas with
+`backdrop-filter: blur()` — `.command-row` and `.command-out` at 14px
+(`App.css:321,363`) and the two Universe overlays at 6px (`overlay.css:23`).
+A backdrop filter makes the compositor sample what is behind it, blur it and
+composite, every frame, with the canvas as the source — **after rAF returns**,
+so no instrument in this repo can see it. It is the first hypothesis that
+explains all surviving evidence at once: JS cheap, frame intervals perfect,
+`fx=off` partial, `field=off`/`core=off` making no difference (a backdrop blur
+costs the same regardless of what is behind it — which is exactly why every
+round-2 toggle came back identical), dev ≡ production, and Safari-specific
+severity.
+**Acceptance:** subjective verdict for the two Safari URLs plus both pasted
+`sweep=drag` blocks; interpretation follows the decision tree already written
+in `PERFORMANCE_BASELINE.md` round 5 §G.
+**If confirmed:** the fix is cosmetic — soften or drop the blur on four
+overlays, or lift them out of the canvas's compositing path. The Lead
+Universe, 4,892-lead book, Intelligence Core and FX are untouched either way.
+**Model:** Opus. Fable only once the fix is agreed and is genuinely visual.
 
-## 1-old. (closed) jank/interaction probes on the M1 — RUN, production measures healthy
+## 1-old. (closed) dev-vs-production A/B — RUN, both feel equally bad
+Retires the build-mode hypothesis: StrictMode and unminified React are not the
+explanation. Owner is on **Safari**, which also means every prior
+"0 long tasks" reading was a false negative (fixed this round).
+
+## 1-older. (closed) jank/interaction probes on the M1 — RUN, production measures healthy
 idle p99 26 ms / drag p99 23 ms, max 28 ms, **zero** frames over 33 ms in the
 drag sweep, zero long tasks, no input event over 16 ms. Recorded in
 `PERFORMANCE_BASELINE.md` round 4. Treated as evidence the harness measures
