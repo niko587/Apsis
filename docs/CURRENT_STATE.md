@@ -1,7 +1,7 @@
 # Current State
 
-_Last updated: 2026-09-16 (authentication implemented; previous phase: host
-interpreter endpoint + deployment hardening)_
+_Last updated: 2026-09-16 (dynamic drill dimensions contract; previous phase:
+authentication)_
 
 This file is the snapshot an external AI project manager should trust over any
 conversation history. It describes the repository as it actually is.
@@ -391,6 +391,35 @@ of which would only have failed in production:
    the identity table grew for the life of an instance. Replaced with one map
    per identity and an amortised five-minute sweep; `RateLimiter.size()` is what
    makes reclamation testable at all.
+
+## Current milestone: dynamic drill dimensions (contract only)
+
+§15 registered nine dimensions — region, state, city, segment, campaign, source,
+agent, timeframe, temperature. **Four are reachable; five are real, tested and
+have no UI.** Contract: `docs/CONTRACT_DYNAMIC_DRILL_DIMENSIONS.md`, **not
+implemented**.
+
+**Interaction: choose the next grouping at each level (D48).** Presets were
+rejected — a named library to maintain, a second concept before the user asked
+for one, and a nearly-right preset still needs per-level control. What makes
+per-level choice safe rather than confusing is that the default chain is
+pre-selected at every depth: `DRILL_SEQUENCE` is demoted from "the drill order"
+to "the default suggestion", which is the whole architectural change and the
+reason a user who never opens the picker sees today's screen unchanged.
+
+**Three decisions (D48–D51):** one availability rule — a dimension is offered
+only if it splits the cluster into ≥2 children, which subsumes repeats *and*
+geography nesting so no compatibility table exists; `MAX_DRILL_DEPTH = 4` as an
+explicit constant, because making focus depth data-dependent would make
+`isIndividualFocus` impure and it is read per frame; and a live path is reported,
+never rewritten — with nothing persisted, since a restored `timeframe · Today`
+is empty by the next morning.
+
+**The architectural proof is a file boundary:** `LeadField.tsx` and
+`LeadList.tsx` must not change. Emphasis, recession and the roster already
+derive from `matchesPath`, so a dynamic path enters through the existing door.
+If either needs an edit, the design is wrong. Score remains the only thing that
+moves a lead.
 
 ## Authentication and access control (2026-09-16) — IMPLEMENTED
 

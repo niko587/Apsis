@@ -695,3 +695,66 @@ preserved and anything else becomes "cannot say".
 The distinction worth keeping: 401 is evidence of no session, 403 is evidence of
 a session, and 503 is evidence of nothing at all.
 Forbids: treating an authorization failure as ambiguous about authentication.
+
+## D48 — Choose the next grouping, not a report
+(2026-09-16) Dynamic drill dimensions contract. Nine dimensions are registered
+and four are reachable; the picker exposes the rest by making the heading the
+overlay ALREADY renders — "Drill into city" — a control.
+Presets were rejected: they need a named library to maintain, add a second
+concept ("which analysis am I in?") before the user has asked for one, and a
+nearly-right preset still needs per-level control. A preset list is the first
+step toward the BI dashboard this product is not.
+What makes per-level choice safe rather than confusing is that **the default
+chain is pre-selected at every depth**. `DRILL_SEQUENCE` survives, demoted from
+"the drill order" to "the default suggestion at each depth" — that demotion is
+the entire architectural change, and it is why a user who never opens the picker
+sees today's screen.
+Forbids: preset sequences; any second way to configure a drill; a picker that is
+open, focused or visible by default.
+
+## D49 — A dimension is offered only if it can split the cluster
+(2026-09-16) One rule replaces three. The picker offers a dimension when it
+yields ≥2 distinct keys among the current members, and hides it otherwise.
+That single test subsumes every case: a repeated dimension yields one child, so
+repeats become impossible without a "used" set; `region` after `state` yields one
+child, so **geography needs no special-casing** and none is added; and a
+dimension where every member happens to share a value is hidden because offering
+a control that provably changes nothing is noise.
+Ordering is default-first then registry order — never by child count, because a
+list that reorders itself as the feed lands is a list nobody can build muscle
+memory for. Computed when the picker OPENS, with an early exit per dimension at
+the second distinct key: a menu computes its contents when summoned, not on
+every revision for a menu nobody opened.
+Forbids: a hardcoded dimension-compatibility table; reordering the picker by
+live counts; computing availability per frame or per revision.
+
+## D50 — Drill depth is a constant, not the length of the default sequence
+(2026-09-16) `MAX_DRILL_DEPTH = 4`. Three files read `DRILL_SEQUENCE.length` to
+decide when individual focus becomes available — `drillStore`,
+`SelectedLeadFocus`, `CameraRig` — which silently coupled §14's behaviour to the
+default path's length. With dynamic dimensions that coupling is wrong in
+principle even while the numbers agree, so it is made explicit.
+Rejected: a user-selected terminal "Leads" step (a second control and a second
+way to be at the bottom) and depth-when-the-cluster-is-small — the latter would
+make `isIndividualFocus` depend on the book, and it is read PER FRAME, so focus
+would flicker as the feed changed a child count and a pure `(lead, path)`
+predicate would become impure.
+Forbids: unlimited recursive drilling; making focus depth data-dependent.
+
+## D51 — A live path is reported, never rewritten
+(2026-09-16) Agent ownership changes on every event, `timeframe` buckets move
+with the wall clock, and `temperature` follows `stage` — so a path the user
+chose can shrink or empty while they are looking at it.
+Apsis never auto-pops, never substitutes a key, and never silently rewrites the
+path. An empty cluster keeps its breadcrumb and says so, with the existing Back
+control as the way out. The roster already renders "No leads in this cluster"
+and focus already dissolves on the membership test, so the honest behaviour is
+mostly free.
+Related and deliberate: the drill path is NOT persisted. Persistence v1 is a
+canonical event log replayed through `ingest` (D23); a drill path is neither an
+event nor domain state, and a restored `timeframe · Today` is empty by the next
+morning — so a returning user's first sight would be an empty cluster they did
+not choose. Persisting something merely because a persistence layer exists is
+the failure this policy names.
+Forbids: auto-popping or rewriting a drill path as the book changes; persisting
+navigation state.

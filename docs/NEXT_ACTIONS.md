@@ -1,7 +1,7 @@
 # Next Actions
 
-_Last updated: 2026-09-16 (authentication implemented). Ordered. Each item:
-what, why now, acceptance, suggested model (spec §2)._
+_Last updated: 2026-09-16 (dynamic drill dimensions contract). Ordered. Each
+item: what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
 - GitHub bootstrap. Remote exists, `main` canonical, `/docs` browsable (D19).
@@ -43,7 +43,12 @@ there are no known failing tests and no recorded intermittents.
 
 Two verifications remain and **neither has been run**, because no credentials
 exist in this environment: a real WorkOS development sign-in, and the Anthropic
-live smoke test. Exact commands for both are in the README.
+live smoke test. Exact commands for both are in the README. Neither blocks the
+current milestone.
+
+The current milestone is **dynamic drill dimensions** (§1e) — contract written
+and binding at `docs/CONTRACT_DYNAMIC_DRILL_DIMENSIONS.md`, **not yet
+implemented**.
 
 ## 0. (closed) Reachability suite over-strictness — FIXED, CI trust restored
 The assertion required an element's whole bounding box inside the viewport,
@@ -267,7 +272,46 @@ browser 65 (was 48). D41 records what is structural; D42–D45 the closeout.
 The moment real customer data is served from the server, the app-wide gate
 becomes mandatory.
 
-## 1d. Next candidates (none started)
+## 1e. Dynamic drill dimensions — **CURRENT MILESTONE**
+**MODEL: OPUS.** Contract written and committed:
+**`docs/CONTRACT_DYNAMIC_DRILL_DIMENSIONS.md`** — mental model, interaction
+choice, default behaviour, state, path semantics, availability rules, depth rule,
+live-path validity, camera, field, roster, breadcrumbs, picker spec, responsive,
+a11y, reduced motion, persistence, file boundaries, 17 unit + 15 browser tests,
+performance acceptance, acceptance criteria, sequence and the prompt in §AA.
+
+**The gap:** §15 registered nine dimensions — region, state, city, segment,
+campaign, source, agent, timeframe, temperature. Four are reachable. The other
+five are real, tested, and have no UI.
+
+**Chosen interaction: choose the next grouping at each level (D48).** Presets
+were rejected — a named library to maintain, a second concept before the user
+asked for one, and a nearly-right preset still needs per-level control. What
+makes per-level safe is that **the default chain is pre-selected at every
+depth**: `DRILL_SEQUENCE` is demoted from "the drill order" to "the default
+suggestion", which is the entire architectural change and the reason a user who
+never opens the picker sees today's screen.
+
+**Three decisions worth arguing with:**
+1. **One availability rule (D49).** A dimension is offered only if it splits the
+   cluster into ≥2 children. That subsumes repeats *and* geography nesting —
+   `region` after `state` yields one child, so no compatibility table is needed
+   and none is added.
+2. **`MAX_DRILL_DEPTH = 4` (D50).** Three files currently read
+   `DRILL_SEQUENCE.length` to decide when §14 focus engages, silently coupling it
+   to the default path's length. Depth-when-small was rejected: it would make
+   `isIndividualFocus` depend on the book, and it is read *per frame*.
+3. **A live path is reported, never rewritten (D51).** Agent ownership,
+   timeframe buckets and temperature all move under a standing path. No
+   auto-popping, no substituted keys — an honest empty state and the existing way
+   out. And nothing persists: a restored `timeframe · Today` is empty by morning.
+
+**The architectural proof:** `LeadField.tsx` and `LeadList.tsx` must not change.
+Emphasis, recession and the roster already derive from `matchesPath`, so a
+dynamic path enters through the existing door. If either needs an edit, the
+design is wrong.
+
+## 1d. Other candidates (none started)
 - **Live verification.** A real WorkOS development sign-in and the Anthropic
   smoke test. Both need credentials this environment does not have.
 - **Durable quotas and instant revocation.** The two things that justify a
