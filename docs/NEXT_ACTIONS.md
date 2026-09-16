@@ -152,9 +152,22 @@ does not care whether this endpoint exists.
 **Stated plainly, not buried:** the endpoint is unauthenticated and backed by a
 metered vendor key, so anyone who can reach it can spend it. Rate limiting,
 size caps, same-origin checks and a vendor spend cap are cost control, not
-access control. The README says so. **No real-key call has been made** — every
-test uses a fake provider, so the vendor request/response shape is asserted but
-not yet confirmed against the live API.
+access control. The README says so.
+
+**Deployment hardening (D32–D34)** closed three review findings, each of which
+would only have failed in production: `temperature: 0` made
+`APSIS_MODEL=claude-sonnet-5` a hard 400 (no sampling parameters are sent now,
+on any model); Vercel request cancellation is opt-in per path and is now enabled
+in `vercel.json`, without which abandoned requests keep running and are billed;
+and the rate-limiter cleanup ran after the push, so it could never fire and the
+identity table leaked.
+
+**No real-key call has been made.** Model ids, the forced `tool_choice` shape
+and the Sonnet 5 sampling restriction were each confirmed against
+platform.claude.com during the hardening pass, but every test still runs against
+a fake provider. **The first thing to do with a key in hand is the smoke test in
+the README** — `npm run dev:api` + `npm run dev`, then one `curl` at
+`/api/interpret`.
 
 ## 1b. Next: authentication before any public deployment — **CURRENT MILESTONE**
 The endpoint works and is deliberately not safe to expose. Until identity exists

@@ -373,3 +373,59 @@ into the README, not just here, because a reader deciding whether to deploy is
 the person who needs it.
 Forbids: describing the limiter as access control; enabling text logging in
 production; a public deployment before authentication lands.
+
+## D32 — Send no sampling parameters, on any model
+(2026-09-16) The provider sent `temperature: 0` for determinism. Claude Sonnet 5
+— the documented `APSIS_MODEL` escalation path — returns a **400** when
+`temperature`, `top_p` or `top_k` is set to a non-default value (verified at
+platform.claude.com/docs/en/models/sonnet-5/overview). So the escalation path
+was a one-variable outage: flip the env var and every command becomes a 502 and
+every user is silently demoted to the grammar.
+The fix is to send none of them, and the reason it is not a per-model capability
+table is that a table has to be updated for every future model, fails closed
+only if someone remembers, and fails as a production 400 rather than a red test.
+Sending nothing is valid everywhere — each model uses its own default — so there
+is no decision left to get wrong. What `temperature: 0` was buying is already
+bought structurally: forced tool use fixes the shape, the enum fixes the field
+names, and the browser validator fixes what may reach `LeadQuery`. Identical
+paraphrase mapping was never a guarantee this design relied on.
+Related, and documented rather than defended against: forced tool use
+(`tool_choice: {type:'tool'}`) returns 400 on Claude Fable 5.1 and Mythos 5.1,
+and on manual extended thinking. Adaptive-thinking models (Sonnet 5, Opus 5)
+accept it. `APSIS_MODEL` is free text, so that is a real deployment footgun and
+it belongs in the README next to the variable.
+Forbids: sending `temperature`, `top_p` or `top_k`; branching the request on
+model id.
+
+## D33 — Cancellation that is not enabled is cancellation that does not exist
+(2026-09-16) The handler aborts the provider call when the browser hangs up, so
+an abandoned command stops costing money. On Vercel that is opt-in **per path**:
+without `"supportsCancellation": true` under `functions` in `vercel.json`,
+`request.signal` never fires, the handler still looks correct, and every
+abandoned request runs to completion and is billed.
+Nothing in the source could reveal that, which is the whole problem — so the
+configuration is asserted by a test that also walks `api/` and requires an entry
+for EVERY function, because adding a second endpoint without cancellation is the
+realistic way this regresses. The adapter is asserted to stay under eight lines
+for the same reason: logic that migrates into the platform file stops being
+covered by `server/*.test.ts` and stops running locally.
+Forbids: a function in `api/` with no `supportsCancellation` entry; logic in the
+platform adapter.
+
+## D34 — Cleanup that runs after the push can never fire
+(2026-09-16) The rate limiter's bucket cleanup read
+`if (perHour.length === 0) hour.delete(key)` immediately AFTER pushing the
+current timestamp, so the length was structurally never zero and the branch was
+dead. Every IP an instance had ever seen was retained for the life of that
+instance, and nothing exposed the table's size, so no test could have noticed.
+Replaced with one map per identity (two maps let a key survive in one after
+being dropped from the other) and an amortised sweep every five minutes: the
+keys that leak are exactly the ones that stopped calling, so only a periodic
+pass can reclaim them, and a per-request full scan would put O(all keys) on the
+hot path. `RateLimiter` now exposes `size()`, which is what makes reclamation
+testable at all.
+The honest scope is unchanged: serverless instances do not share memory, so the
+real ceiling is roughly instances × limit. This is cost control, not
+authentication (D31).
+Forbids: cleanup predicated on state the surrounding code has just made
+impossible; an unbounded identity table; an O(all keys) sweep per request.

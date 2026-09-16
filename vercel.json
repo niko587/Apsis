@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/interpret.ts": {
+      "supportsCancellation": true
+    }
+  },
+  "headers": [
+    {
+      "source": "/apsis-config.js",
+      "headers": [{ "key": "cache-control", "value": "no-cache" }]
+    }
+  ]
+}

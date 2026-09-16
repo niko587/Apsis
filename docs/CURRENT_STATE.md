@@ -11,7 +11,7 @@ conversation history. It describes the repository as it actually is.
 | Check | Status | Command |
 |---|---|---|
 | TypeScript | clean (4 projects: app, node, e2e, server) | `npm run typecheck` |
-| Unit tests | **302 / 302 passing** (18 files) | `npm test` |
+| Unit tests | **320 / 320 passing** (19 files) | `npm test` |
 | Browser suite | **48 / 48 passing** | `npm run test:e2e` |
 | Lint | exit 0 (warnings only, see below) | `npm run lint` |
 | Production build | green, ~1.27 MB bundle (350 KB gz) | `npm run build` |
@@ -373,6 +373,27 @@ limiting, size caps, same-origin checks and a vendor spend cap are cost control,
 not access control, and on serverless the per-IP bucket is per-instance.
 Authentication is the milestone after it, and the README says so.
 
-**No real-key call has been made.** The vendor request and response shapes are
-asserted against a fake provider; they are not yet confirmed against the live
-API. That is the first thing to do with a key in hand.
+**Deployment hardening (same day)** closed three defects a review found, each
+of which would only have failed in production:
+
+1. **`temperature: 0` made the escalation path a hard break (D32).** Sonnet 5
+   returns a 400 for non-default `temperature`/`top_p`/`top_k`, so
+   `APSIS_MODEL=claude-sonnet-5` would have turned every command into a 502 and
+   silently demoted every user to the grammar. No sampling parameters are sent
+   now, on any model — deliberately not a per-model capability table, which
+   would fail as a production 400 rather than a red test.
+2. **Vercel request cancellation is opt-in per path (D33).** Without
+   `supportsCancellation` in `vercel.json` the handler's abort logic looks
+   correct and never runs: every abandoned request completes and is billed. A
+   test now walks `api/` and requires an entry for every function.
+3. **The rate limiter's cleanup could never fire (D34).** It tested
+   `perHour.length === 0` immediately after pushing the current timestamp, so
+   the identity table grew for the life of an instance. Replaced with one map
+   per identity and an amortised five-minute sweep; `RateLimiter.size()` is what
+   makes reclamation testable at all.
+
+**No real-key call has been made.** Request and response shapes are asserted
+against the current published API (model ids, forced `tool_choice`, and the
+sampling restriction were each confirmed against platform.claude.com during the
+hardening pass) but not against the live one. The README carries the exact
+smoke-test command; running it is the first thing to do with a key in hand.

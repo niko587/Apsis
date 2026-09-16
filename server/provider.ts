@@ -51,6 +51,54 @@ const API_URL = 'https://api.anthropic.com/v1/messages';
 const API_VERSION = '2023-06-01';
 const MAX_TOKENS = 1024;
 
+/**
+ * The Messages API request. **No sampling parameters, on any model.**
+ *
+ * This used to send `temperature: 0` for determinism. Claude Sonnet 5 — the
+ * documented escalation path for `APSIS_MODEL` — returns a **400** for
+ * `temperature`, `top_p` or `top_k` set to non-default values, so the escalation
+ * path was a hard break: a one-variable change would have turned every command
+ * into a 502 and silently demoted every user to the grammar.
+ *
+ * Omitting them is the fix, and it is deliberately not a model capability
+ * table. A branch keyed on model id has to be updated for every future model,
+ * fails closed only if someone remembers, and the failure mode is a 400 in
+ * production rather than a test. Sending nothing is valid on every model —
+ * each simply uses its own default — so there is no decision left to get wrong.
+ *
+ * What determinism was buying is already bought structurally: forced tool use
+ * fixes the shape, the enum fixes the field names, and the browser validator
+ * fixes what may reach `LeadQuery`. A slightly different paraphrase mapping the
+ * same way twice was never a guarantee this design relied on.
+ *
+ * NOT EVERY MODEL ACCEPTS FORCED TOOL USE. `tool_choice: {type:'tool'}` returns
+ * 400 on Claude Fable 5.1 and Mythos 5.1, and on manual extended thinking.
+ * Adaptive-thinking models (Sonnet 5, Opus 5) accept it. `APSIS_MODEL` is free
+ * text, so this is a real deployment footgun and it is called out in the README
+ * rather than defended against with another capability table.
+ */
+export interface MessagesRequest {
+  model: string;
+  max_tokens: number;
+  system: string;
+  messages: Array<{ role: 'user'; content: string }>;
+  tools: Array<ReturnType<typeof interpretationTool>>;
+  tool_choice: { type: 'tool'; name: string };
+}
+
+export function buildMessagesRequest(model: string, text: string): MessagesRequest {
+  return {
+    model,
+    max_tokens: MAX_TOKENS,
+    system: buildSystemPrompt(),
+    messages: [{ role: 'user', content: buildUserContent(text) }],
+    tools: [interpretationTool()],
+    // The structural constraint. A model that must call this tool cannot answer
+    // in prose, and cannot invent a field name.
+    tool_choice: { type: 'tool', name: TOOL_NAME },
+  };
+}
+
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
 export interface AnthropicConfig {
@@ -78,18 +126,7 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
             'anthropic-version': API_VERSION,
           },
           signal,
-          body: JSON.stringify({
-            model,
-            max_tokens: MAX_TOKENS,
-            // Deterministic: the same command should map the same way twice.
-            temperature: 0,
-            system: buildSystemPrompt(),
-            messages: [{ role: 'user', content: buildUserContent(text) }],
-            tools: [interpretationTool()],
-            // The structural constraint. A model that must call this tool
-            // cannot answer in prose, and cannot invent a field name.
-            tool_choice: { type: 'tool', name: TOOL_NAME },
-          }),
+          body: JSON.stringify(buildMessagesRequest(model, text)),
         });
       } catch (error) {
         // Abort belongs to the caller and must stay distinguishable from a

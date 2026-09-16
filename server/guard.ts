@@ -61,38 +61,91 @@ export type GuardResult = { ok: true; text: string } | { ok: false; failure: Gua
  */
 export interface RateLimiter {
   check(key: string, now: number): { allowed: boolean; retryAfterSeconds: number };
+  /** Identities currently retained. Diagnostics, and what makes cleanup testable. */
+  size(): number;
+}
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 3_600_000;
+/**
+ * How often the whole table is swept for identities that have gone away.
+ *
+ * Per-request cleanup can only ever prune the key in front of it, and the keys
+ * that leak are precisely the ones that stopped calling — so a periodic sweep
+ * is the only thing that can reclaim them. Five minutes keeps it far from the
+ * hot path: at the configured 20/min ceiling a sweep happens at most once per
+ * hundreds of requests, so it is amortised, not per-request work.
+ */
+const SWEEP_INTERVAL_MS = 300_000;
+
+interface Bucket {
+  minute: number[];
+  hour: number[];
 }
 
 export function createRateLimiter(config: RateLimitConfig): RateLimiter {
-  const minute = new Map<string, number[]>();
-  const hour = new Map<string, number[]>();
+  // One map, not two: the two windows describe the same identity, and splitting
+  // them is what let a key survive in one map after being dropped from the other.
+  const buckets = new Map<string, Bucket>();
+  let nextSweepAt = Number.NEGATIVE_INFINITY;
 
-  const sweep = (store: Map<string, number[]>, key: string, now: number, windowMs: number) => {
-    const hits = (store.get(key) ?? []).filter((t) => now - t < windowMs);
-    store.set(key, hits);
-    return hits;
+  const prune = (bucket: Bucket, now: number) => {
+    bucket.minute = bucket.minute.filter((t) => now - t < MINUTE_MS);
+    bucket.hour = bucket.hour.filter((t) => now - t < HOUR_MS);
+  };
+
+  /**
+   * Drop every identity with nothing left in either window.
+   *
+   * The hour window contains the minute window, so an empty hour implies an
+   * empty minute — one test, no chance of the two disagreeing.
+   */
+  const sweepAll = (now: number) => {
+    for (const [key, bucket] of buckets) {
+      prune(bucket, now);
+      if (bucket.hour.length === 0) buckets.delete(key);
+    }
+    nextSweepAt = now + SWEEP_INTERVAL_MS;
   };
 
   return {
     check(key, now) {
-      const perMinute = sweep(minute, key, now, 60_000);
-      const perHour = sweep(hour, key, now, 3_600_000);
+      // THE BUG THIS REPLACES: cleanup used to read `if (perHour.length === 0)`
+      // AFTER pushing the current timestamp, so the length was never zero and
+      // the branch was unreachable. Every IP an instance ever saw was retained
+      // for the life of the instance. It is fixed by pruning on a schedule
+      // instead of at a moment when the answer is structurally known.
+      if (now >= nextSweepAt) sweepAll(now);
 
-      if (perMinute.length >= config.perMinute) {
-        const oldest = perMinute[0];
-        return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((60_000 - (now - oldest)) / 1000)) };
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { minute: [], hour: [] };
+        buckets.set(key, bucket);
       }
-      if (perHour.length >= config.perHour) {
-        const oldest = perHour[0];
-        return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((3_600_000 - (now - oldest)) / 1000)) };
+      prune(bucket, now);
+
+      if (bucket.minute.length >= config.perMinute) {
+        const oldest = bucket.minute[0]!;
+        return {
+          allowed: false,
+          retryAfterSeconds: Math.max(1, Math.ceil((MINUTE_MS - (now - oldest)) / 1000)),
+        };
+      }
+      if (bucket.hour.length >= config.perHour) {
+        const oldest = bucket.hour[0]!;
+        return {
+          allowed: false,
+          retryAfterSeconds: Math.max(1, Math.ceil((HOUR_MS - (now - oldest)) / 1000)),
+        };
       }
 
-      perMinute.push(now);
-      perHour.push(now);
-      // Unbounded key growth is the obvious leak here; a swept-empty bucket is
-      // dropped so an instance that sees many IPs once does not retain them.
-      if (perHour.length === 0) hour.delete(key);
+      bucket.minute.push(now);
+      bucket.hour.push(now);
       return { allowed: true, retryAfterSeconds: 0 };
+    },
+
+    size() {
+      return buckets.size;
     },
   };
 }

@@ -76,6 +76,21 @@ npm run dev                        # Vite on :5173, proxying /api
 Then uncomment the declaration in `public/apsis-config.js`. The key lives only
 in the `dev:api` process — it never enters Vite, and never enters the bundle.
 
+### Choosing a model
+
+`APSIS_MODEL` defaults to `claude-haiku-4-5-20251001` and escalates to
+`claude-sonnet-5` with no code change. Two things to know before setting it to
+anything else:
+
+- **Apsis sends no sampling parameters** (`temperature`, `top_p`, `top_k`).
+  Sonnet 5 returns a 400 for non-default values, so sending them would break the
+  escalation path; omitting them is valid on every model.
+- **The design requires forced tool use.** `tool_choice: {type: 'tool'}` returns
+  a 400 on Claude Fable 5.1 and Mythos 5.1, and on manual extended thinking.
+  Adaptive-thinking models (Sonnet 5, Opus 5) accept it. A model that rejects
+  forced tool use will fail every request — the browser falls back to its
+  grammar, so nothing breaks for the user, but the interpreter is doing nothing.
+
 ### Read this before deploying it publicly
 
 - **The endpoint is unauthenticated.** Anyone who can reach it can spend your
@@ -86,6 +101,30 @@ in the `dev:api` process — it never enters Vite, and never enters the bundle.
   argued with.
 - **Authentication is the next milestone.** Until it lands, treat a public
   deployment as a metered resource you have left unlocked.
+- **No live API call has been made yet.** Every test runs against a fake
+  provider, so the request and response shapes are asserted against the current
+  published API but not yet confirmed against the real one. Run the smoke test
+  below first.
+
+### First run against the real API
+
+```bash
+npm run dev:api          # terminal 1 — needs .env.local with your key
+npm run dev              # terminal 2
+
+curl -sS -w '\nHTTP %{http_code} in %{time_total}s\n' \
+  -X POST http://localhost:5173/api/interpret \
+  -H 'content-type: application/json' \
+  -d '{"text":"show me hot leads in Florida"}'
+```
+
+A healthy answer is `200` with `filters` naming `stages: hot` and `states: FL`,
+each carrying a `span` copied from your text. A `502 provider_unconfigured`
+means the key was not loaded; any other non-200 means the browser would have
+fallen back to the grammar with a note, which is the designed behaviour.
+
+`vercel.json` enables per-path request cancellation, which Vercel requires as an
+opt-in — without it an abandoned request keeps running and is billed.
 
 Full design: `docs/CONTRACT_HOST_INTERPRETER_ENDPOINT.md`.
 
