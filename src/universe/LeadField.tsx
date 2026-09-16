@@ -97,10 +97,13 @@ export function LeadField() {
   const pointsRef = useRef<THREE.Points>(null);
   const fieldRef = useRef<THREE.Group>(null);
   const markerRef = useRef<THREE.Mesh>(null);
+  /** Hover ring — the field half of the list⇄field loop. See the frame block. */
+  const hoverRef = useRef<THREE.Mesh>(null);
   const count = useApsis((s) => s.order.length);
   const select = useApsis((s) => s.select);
   const selectedId = useApsis((s) => s.selectedLeadId);
   const hover = useApsis((s) => s.hover);
+  const hoveredId = useApsis((s) => s.hoveredLeadId);
   const reducedMotion = useReducedMotion();
   const lastRevision = useRef(-1);
   const lastMatched = useRef<Set<string> | null>(null);
@@ -406,6 +409,37 @@ export function LeadField() {
       }
     }
 
+    /**
+     * Hover ring.
+     *
+     * Closes a loop that was previously one-way: the list has always written
+     * `hoveredLeadId`, but nothing in the 3D layer read it, so pointing at a row
+     * lit nothing and pointing at a particle marked no row. Correlating the two
+     * surfaces is what makes a deep cluster navigable by reading rather than by
+     * clicking particles.
+     *
+     * A separate mesh rather than a write into `aSize`/`aColor`: touching the
+     * shared attribute for one index re-uploads the WHOLE buffer every frame —
+     * 19KB at the default book, 240KB at 60k. This costs +1 draw call while
+     * hovering and exactly nothing otherwise.
+     *
+     * Deliberately subordinate to both the selection marker and the §14
+     * reticle: thinner, dimmer, no pulse. It answers "which one is that", not
+     * "this is the subject".
+     */
+    const hoverRing = hoverRef.current;
+    if (hoverRing) {
+      const hIdx =
+        hoveredId && hoveredId !== selectedId ? (readIndexOf().get(hoveredId) ?? -1) : -1;
+      hoverRing.visible = hIdx >= 0;
+      if (hIdx >= 0) {
+        hoverRing.position
+          .set(current[hIdx * 3], current[hIdx * 3 + 1], current[hIdx * 3 + 2])
+          .applyQuaternion(field.quaternion);
+        hoverRing.quaternion.copy(state.camera.quaternion);
+      }
+    }
+
     if (PROBE) {
       span('leadFieldFrame', performance.now() - probeT0);
       // The settled-field question: this loop is O(count) unconditionally, so
@@ -456,6 +490,17 @@ export function LeadField() {
         />
         <lineSegments geometry={trailGeometry} material={trailMaterial} />
       </group>
+      {/* Hover ring — quieter twin of the selection marker, same hand-positioning
+          reason. Hidden unless a hovered lead differs from the selected one. */}
+      <mesh ref={hoverRef} visible={false} raycast={() => null}>
+        <ringGeometry args={[0.13, 0.155, 32]} />
+        {/* FrontSide, not DoubleSide: a transparent double-sided material is
+            rendered in TWO passes (back faces, then front) for correct sorting,
+            so it costs two draw calls rather than one. The ring is billboarded
+            to the camera and can never show its back, so the second pass buys
+            nothing — measured 32 draws with DoubleSide, 31 with this. */}
+        <meshBasicMaterial color="#9db2ff" transparent opacity={0.5} depthTest={false} />
+      </mesh>
       {/* Billboarded selection ring. Sibling of the field, positioned by hand — see
           the marker block in useFrame for why it cannot simply be a child. */}
       <mesh ref={markerRef} visible={false}>
