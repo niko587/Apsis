@@ -57,10 +57,19 @@ stream, so persistence needed no migration (D24). 23 tests added (133 → 156).
 Not in the default drill path — a dimension picker is UI work for later.
 
 ## 1. §14 spatial individual transition — NEXT MILESTONE
-**MODEL: FABLE** for the visual/spatial implementation, with **Opus**
-establishing or reviewing the technical contracts (CameraRig, reduced-motion,
-a11y parity) as needed. This is the first milestone in a long while whose
-substance is genuinely visual rather than architectural.
+**MODEL: FABLE.** The contract is written and committed:
+**`docs/CONTRACT_14_SPATIAL_INDIVIDUAL.md`** — state model, camera derivation,
+emphasis limits, in-scene information, rail relationship, reduced motion, a11y,
+responsive rules, exit/unwind, performance guardrails, allowed/forbidden files,
+acceptance criteria, and the verbatim implementation prompt in §O.
+Opus wrote it after inspecting `CameraRig`, `LeadField`, `drillStore`,
+`UniverseOverlay`, `StatusAnnouncer` and the responsive CSS; Fable should read
+it first and treat it as binding.
+
+**Prep finding worth knowing before starting:** `CameraRig` already implements a
+partial §14 — at full drill depth a selection lerps the camera target 45% toward
+the lead's live position. The move exists but never arrives, and nothing in the
+scene marks the lead as the subject. This is an extension, not a green field.
 **What:** At full drill depth + selection, resolve the lead in-field — the
 camera completes the approach and a compact in-scene card or emphasised node
 carries the lead, demoting the rail panel to secondary.
