@@ -50,25 +50,33 @@ singleton boot promise (restore → record → source). Two-step Reset control.
 fails loudly and never partially applies. See `ARCHITECTURE.md` → "Persistence
 v1" and D23.
 
-## 1. Remaining §15 drill dimensions — NEXT MILESTONE
-**What:** Add `campaign` and `source` fields to the domain + seed (weighted,
-deterministic), then registry entries for campaign / source / agent /
-timeframe; UI needs nothing new (registry-driven).
-**Acceptance:** each new dimension drills and partitions (>1 child, counts
-sum to members — existing test pattern); parser optionally learns
-`from <campaign>` later.
-**Model:** Opus (domain), no visual work needed.
+## 0d. (closed) §15 drill dimensions — campaign, source, agent, timeframe
+Eight registry dimensions; `DRILL_SEQUENCE` unchanged so the drill UI and camera
+are untouched. New `Lead` fields hash the id rather than consuming the seed
+stream, so persistence needed no migration (D24). 23 tests added (133 → 156).
+Not in the default drill path — a dimension picker is UI work for later.
 
-## 2. §14 spatial individual transition
-**What:** At full drill depth + selection, resolve the lead in-field (camera
-completes the approach; a compact in-scene card or emphasized node), demoting
-the rail panel to secondary.
-**Acceptance:** Universe → cluster → individual reads as one continuous
-camera journey; reduced-motion path preserved; a11y parity (selection still
-announced, panel still exists).
-**Model:** Fable, with the CameraRig contract from `ARCHITECTURE.md`.
+## 1. §14 spatial individual transition — NEXT MILESTONE
+**MODEL: FABLE** for the visual/spatial implementation, with **Opus**
+establishing or reviewing the technical contracts (CameraRig, reduced-motion,
+a11y parity) as needed. This is the first milestone in a long while whose
+substance is genuinely visual rather than architectural.
+**What:** At full drill depth + selection, resolve the lead in-field — the
+camera completes the approach and a compact in-scene card or emphasised node
+carries the lead, demoting the rail panel to secondary.
+**Why now:** it is the last substantial gap in `SELF-CRITIQUE.md`'s §14 entry:
+"Universe → Cluster → Individual now *is* a camera move, but the individual
+level still resolves into the rail panel rather than into the field." A
+presentation miss rather than a navigation one — which is exactly the kind of
+thing Fable should take.
+**Acceptance:** Universe → cluster → individual reads as one continuous camera
+journey; reduced-motion path preserved (the destination carries the
+information, so the move is shortened, never removed); a11y parity — selection
+still announced, the rail panel still exists and still carries every §14 field.
+**Do not regress:** the round-7 rendering baseline, DPR 2, bloom resolution,
+zero live backdrop sampling, the 4,892-lead book, the Intelligence Core.
 
-## 3. LLM command parsing (opt-in)
+## 2. LLM command parsing (opt-in)
 **What:** `parseCommand` alternative returning the same `LeadQuery` via a
 model call, gated on a configured key; grammar remains the fallback; ignored-
 words honesty must survive (model must report unmapped clauses).
@@ -76,7 +84,7 @@ words honesty must survive (model must report unmapped clauses).
 phrasings parse; funnel/execution untouched.
 **Model:** Opus.
 
-## 4. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
+## 3. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
 **What:** precompute stage colours as RGB triples so no colour string is parsed
 in a hot path, and add an out-parameter `positionInto(lead, out)` so the frame
 path allocates nothing.

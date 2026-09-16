@@ -83,6 +83,70 @@ const SEGMENTS = [
   'Supplemental', 'Dental + Vision',
 ];
 
+/**
+ * Campaign and acquisition source (§15 drill dimensions).
+ *
+ * DERIVED FROM THE LEAD ID, NOT FROM `rand()`. This is the whole reason the
+ * addition is free: consuming even one extra draw inside the seeding loop would
+ * shift the RNG stream for every lead after it, changing scores, names, metros
+ * and angles across the entire book — and a persisted event log replayed onto
+ * that different book would describe different leads. Hashing the id instead
+ * leaves every pre-existing seeded value byte-identical, so Persistence v1 and
+ * the Arc A replay fixture keep working with no migration. See D24.
+ *
+ * Distinct salts keep the two distributions independent; without them a lead's
+ * campaign would predict its source.
+ *
+ * A campaign is the marketing push that produced the lead; `segment` is what
+ * kind of cover they need. They are deliberately different axes — "Open
+ * Enrollment" is a season, "Medicare" is a product.
+ */
+interface Weighted {
+  readonly value: string;
+  readonly weight: number;
+}
+
+const CAMPAIGNS: readonly Weighted[] = [
+  { value: 'Open Enrollment', weight: 26 },
+  { value: 'Medicare AEP', weight: 21 },
+  { value: 'Family PPO', weight: 17 },
+  { value: 'Self-Employed Outreach', weight: 14 },
+  { value: 'Small Business Group', weight: 12 },
+  { value: 'Re-Engagement', weight: 10 },
+];
+
+const ACQUISITION_SOURCES: readonly Weighted[] = [
+  { value: 'Paid Search', weight: 27 },
+  { value: 'Referral', weight: 22 },
+  { value: 'Web', weight: 19 },
+  { value: 'Social', weight: 14 },
+  { value: 'Inbound Call', weight: 11 },
+  { value: 'Partner', weight: 7 },
+];
+
+/** Weighted pick from a unit-interval fraction. Linear — these tables are tiny. */
+function weightedPick(table: readonly Weighted[], u: number): string {
+  const total = table.reduce((sum, row) => sum + row.weight, 0);
+  let target = u * total;
+  for (const row of table) {
+    target -= row.weight;
+    if (target <= 0) return row.value;
+  }
+  return table[table.length - 1].value;
+}
+
+/** Campaign for a lead id. Pure, stable, independent of book size and clock. */
+export const campaignFor = (leadId: string): string =>
+  weightedPick(CAMPAIGNS, stableHash(`${leadId}#campaign`));
+
+/** Acquisition source for a lead id. Not the runtime `LeadSource`. */
+export const acquisitionSourceFor = (leadId: string): string =>
+  weightedPick(ACQUISITION_SOURCES, stableHash(`${leadId}#acquisition`));
+
+/** Every campaign the book can contain, for label/ordering use. */
+export const CAMPAIGN_VALUES: readonly string[] = CAMPAIGNS.map((c) => c.value);
+export const ACQUISITION_SOURCE_VALUES: readonly string[] = ACQUISITION_SOURCES.map((s) => s.value);
+
 const AGENT_SPECS: ReadonlyArray<{ kind: AgentKind; label: string; color: string }> = [
   { kind: 'call', label: 'Call Agent', color: '#7b8cff' },
   { kind: 'sms', label: 'SMS Agent', color: '#12c8e0' },
@@ -146,6 +210,10 @@ export function seedLeads(count: number, seed = 0x5f3a21, now = Date.now()): Lea
       company: null,
       location: locationOf(metro),
       segment: SEGMENTS[Math.floor(rand() * SEGMENTS.length)],
+      // Hashed from the id — deliberately NOT drawn from `rand()`, so the
+      // stream (and therefore the whole book) is unchanged. See the tables above.
+      campaign: campaignFor(`lead_${i.toString(36).padStart(4, '0')}`),
+      acquisitionSource: acquisitionSourceFor(`lead_${i.toString(36).padStart(4, '0')}`),
       score,
       stage: stageFor(score),
       theta,

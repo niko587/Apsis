@@ -207,3 +207,25 @@ Recorded because it was found the hard way: the write scheduler must be a
 trailing THROTTLE, not a debounce. A debounce that restarts on every event never
 fires while events keep arriving, and at ~9/sec it silently persisted nothing
 with no error raised. Forbids: debouncing a write against a continuous stream.
+
+## D24 — New lead fields hash the id; they never consume the seed stream
+(2026-09-16) §15. `campaign` and `acquisitionSource` are canonical `Lead` fields
+derived from `stableHash(id + salt)`, not from the `rng(seed)` stream inside
+`seedLeads`.
+The reason is compatibility, and it is not a detail: the seeding loop draws in
+sequence, so consuming one extra `rand()` shifts every lead after it — different
+scores, names, metros and angles across the whole book. A persisted event log or
+a replay session replayed onto that book would land on *different leads* while
+appearing to work perfectly. Hashing the id sidesteps it entirely: every
+pre-existing seeded value is byte-identical, so Persistence v1 needs no format
+bump and no migration, and the Arc A fixture is unaffected. A pinned-score test
+guards the property.
+Distinct salts per field keep the distributions independent.
+Naming: the field is `acquisitionSource`, NEVER `source` — `LeadSource` is the
+runtime transport and the collision would be permanent.
+Agent grouping reads `lead.ownerAgentId`, which `ingest` sets from event
+attribution. Unworked leads are reported as Unassigned, never dropped: on a cold
+book that is the entire book, and one truthful cluster beats a fabricated
+spread.
+Forbids: adding a seeded lead field by drawing from `rand()` inside the seeding
+loop without an explicit book-schema version bump.

@@ -28,7 +28,7 @@
   },
   "checks": {
     "typescript": "clean (app + node + e2e projects)",
-    "tests": "133/133 passing (10 files)",
+    "tests": "156/156 passing (11 files)",
     "e2e": "11/11 passing — 8 reachability (D21) + 3 browser reload/persistence tests",
     "lint": "exit 0 (R3F idiom warnings in LeadField.tsx only)",
     "build": "green (~1.27MB, 350KB gz)",
@@ -56,7 +56,7 @@
     { "key": "active-skills", "spec": "§12", "status": "real", "files": ["src/universe/skills.ts", "src/universe/UniverseOverlay.tsx"] },
     { "key": "command-interface", "spec": "§13", "status": "real (grammar, not LLM, by design)", "files": ["src/domain/query.ts", "src/ui/CommandBar.tsx"] },
     { "key": "lead-detail", "spec": "§14", "status": "partial (content complete, spatial resolve pending)", "files": ["src/ui/LeadDetail.tsx"] },
-    { "key": "cluster-drill", "spec": "§15", "status": "real for region/state/city/segment; campaign/source/agent/intent/timeframe missing", "files": ["src/universe/clusters.ts", "src/state/drillStore.ts", "src/universe/CameraRig.tsx"] },
+    { "key": "cluster-drill", "spec": "§15", "status": "real — 8 registry dimensions (region/state/city/segment/campaign/source/agent/timeframe + temperature); DRILL_SEQUENCE unchanged so the new four are registry-complete but not in the default drill path (no dimension picker UI yet)", "files": ["src/universe/clusters.ts", "src/state/drillStore.ts", "src/universe/CameraRig.tsx", "src/universe/dimensions.test.ts"] },
     { "key": "appointment-centre", "spec": "§16", "status": "real", "files": ["src/domain/appointments.ts", "src/ui/AppointmentCentre.tsx"] },
     { "key": "telemetry", "spec": "§17", "status": "real", "files": ["src/state/store.ts", "src/ui/SystemState.tsx"] },
     { "key": "event-architecture", "spec": "§18", "status": "partial-divergent (flat union, not namespaced)", "files": ["src/domain/types.ts"] },
@@ -86,7 +86,9 @@
     "never rewrite published history on main without owner instruction (D19)",
     "reachability asserts that the click point is on screen and hit-tests to the target, never pixel-perfect bounding-box containment (D21)",
     "every incoming LeadEvent reaches state through ingest(); a source may never touch the store directly (D22)",
-    "persistence restores by replaying the event log through ingest, never by writing store fields; corrupt history is discarded, never partially applied (D23)"
+    "persistence restores by replaying the event log through ingest, never by writing store fields; corrupt history is discarded, never partially applied (D23)",
+    "a new seeded lead field hashes the lead id; it never consumes the rng(seed) stream, which would shift the whole book and silently repoint every persisted log (D24)",
+    "every drill dimension partitions its parent exactly: one child per lead, counts summing to the parent, nothing dropped (D24)"
   ],
   "blocked": [],
   "performance": {

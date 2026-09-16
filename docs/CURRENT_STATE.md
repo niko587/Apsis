@@ -175,6 +175,35 @@ a continuous ~9/sec feed was cancelled and rescheduled before it could ever
 fire — **nothing was persisted at all, with no error to show for it**. The
 browser reload test caught both; the unit suite was entirely happy.
 
+## §15 drill dimensions complete (2026-09-16)
+
+The registry now carries **eight** dimensions: region, state, city, segment,
+**campaign**, **source**, **agent**, **timeframe**, plus temperature. Each is a
+`ClusterDimension` entry — there is no UI switch statement to update, and
+`DRILL_SEQUENCE` (region → state → city → segment) is unchanged, so the default
+drill path and camera behaviour are exactly as before.
+
+- **`campaign` and `acquisitionSource` are new canonical `Lead` fields**, derived
+  from `stableHash(id + salt)` rather than the seeded RNG stream. That is what
+  makes them free: no pre-existing seeded value changed, so **Persistence v1
+  needs no migration and no version bump**, and the Arc A replay fixture is
+  unaffected (D24). A pinned-score test guards the property.
+- Measured on the default book: campaign 26.5/20.7/16.4/13.9/12.2/10.3 %,
+  source 26.5/21.7/19.2/14.7/11.0/6.9 % — weighted, nothing dominating,
+  nothing vanishing. Every dimension's child counts sum to exactly 4,892.
+- **agent** reads `lead.ownerAgentId` (real event attribution). On a cold book
+  that is one honest **Unassigned** cluster; it splits as a session warms the
+  book. Fabricating seeded ownership was rejected as inventing data.
+- **timeframe** buckets `lastEventAt` — Today / 3d / 7d / 30d / Older — via
+  `createTimeframeDimension(now)`, because `keyFor` takes no clock and a bucket
+  assertion must not depend on when the suite runs.
+- **23 tests added** (133 → 156). Parser grammar deliberately unchanged.
+
+**Known limitation, stated rather than implied:** the four new dimensions are
+registry-complete but not in `DRILL_SEQUENCE`, so they are not reachable from
+the current linear drill UI — the same position `temperature` has always been
+in. Exposing a dimension picker is UI work, not this milestone.
+
 ## In flight right now
 
 Nothing mid-edit. The working tree is consistent and all checks are green.

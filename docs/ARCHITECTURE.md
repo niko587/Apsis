@@ -137,6 +137,75 @@ Implement `LeadSource`, translate the wire payload into `LeadEvent`, call
 (`sms.replied`) need a translation layer at this boundary — see the §18
 divergence below — and nothing above the seam changes.
 
+## §15 drill dimensions — the complete registry
+
+Eight dimensions, all conforming to one `ClusterDimension { id, label, keyFor,
+labelFor, matches }`. `DRILL_SEQUENCE` (region → state → city → segment) is the
+*default path*; the rest are registered and fully functional but not in it,
+exactly as `temperature` already was. **Adding a dimension is a registry entry;
+no UI switch statement exists to update.**
+
+| dimension | key source | notes |
+|---|---|---|
+| region / state / city | `lead.location` + geography tables | the national drill |
+| segment | `lead.segment` | what cover they need |
+| **campaign** | `lead.campaign` | the marketing push that produced them |
+| **source** | `lead.acquisitionSource` | how they were acquired |
+| **agent** | `lead.ownerAgentId` | real attribution, see below |
+| **timeframe** | `lead.lastEventAt` | recency, see below |
+| temperature | `lead.stage` | proof the registry is not geography-shaped |
+
+### campaign and acquisition source
+
+Both are canonical `Lead` fields, generated in `seedLeads` from
+`stableHash(id + salt)` — **not from the seeded `rand()` stream**. That choice is
+load-bearing: consuming even one extra draw inside the seeding loop would shift
+every subsequent lead's score, name, metro and angle, and a persisted event log
+replayed onto that different book would describe different leads. Hashing the id
+leaves every pre-existing value byte-identical, so Persistence v1 and the Arc A
+fixture keep working with no migration (D24).
+
+Distinct salts keep the two independent; a shared salt would make a lead's
+campaign predict its source. Measured on the default book: campaign 26.5 / 20.7
+/ 16.4 / 13.9 / 12.2 / 10.3 %, source 26.5 / 21.7 / 19.2 / 14.7 / 11.0 / 6.9 % —
+weighted, with nothing dominating and nothing vanishing.
+
+**The field is `acquisitionSource`, never `source`.** `LeadSource` is the runtime
+transport that produces events; they are unrelated concepts that would otherwise
+collide in every search.
+
+### agent
+
+Source of truth is `lead.ownerAgentId`, which `ingest` sets from the `agentId` of
+the event that last touched the lead — real attribution, not a fabricated
+assignment field. Leads nothing has worked yet are reported as **Unassigned**
+rather than dropped. On a freshly seeded book that is *every* lead, so Agent
+shows a single honest cluster until a session warms the book; inventing seeded
+ownership to make the demo look richer would be inventing data the product does
+not have.
+
+### timeframe
+
+Buckets `lead.lastEventAt` by age against a reference time: Today, Last 3 days,
+Last 7 days, Last 30 days, Older. First matching bucket wins, so they are
+mutually exclusive by construction and `Older` is total — including a
+future-dated `lastEventAt` from clock skew, which lands in Today rather than
+nowhere.
+
+It is the one dimension that depends on *when you ask*, and `keyFor` takes no
+clock — so `createTimeframeDimension(now)` captures the reference time. Production
+registers it with `Date.now`; tests build one with a fixed clock, which is the
+only way a bucket assertion can be deterministic rather than a function of when
+the suite happened to run.
+
+### The partition invariant
+
+Every dimension must partition its parent: each lead in exactly one child, child
+counts summing exactly to the parent, nothing dropped. `clusterChildren` skips a
+null key, so a dimension that returns null for some leads would silently show a
+book smaller than the one that exists — which is why no dimension returns null
+and the suite asserts it across the whole 4,892-lead book.
+
 ## Persistence v1 (`src/state/persistence.ts`, `src/state/boot.ts`)
 
 The saved file is **not** an alternate authoritative store. It is a durable copy

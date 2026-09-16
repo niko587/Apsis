@@ -101,6 +101,19 @@ export interface Lead {
   readonly company: string | null;
   readonly location: string;
   readonly segment: string;
+  /**
+   * Marketing campaign that produced the lead (§15 drill dimension).
+   * Derived deterministically from the lead id, not from the seeded RNG stream.
+   */
+  readonly campaign: string;
+  /**
+   * How the lead was acquired — referral, paid search, partner and so on.
+   *
+   * Named `acquisitionSource`, never `source`, so it can never be confused with
+   * `LeadSource`, the runtime transport that produces events. They are unrelated
+   * concepts that would otherwise collide in every search for "source".
+   */
+  readonly acquisitionSource: string;
   /** 0-100. The single source of truth for radial position and stage. */
   readonly score: Score;
   readonly stage: Stage;

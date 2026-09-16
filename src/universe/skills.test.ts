@@ -10,6 +10,8 @@ const lead = (id: string, name: string): Lead => ({
   company: null,
   location: 'Tampa, FL',
   segment: 'Family Coverage',
+  campaign: 'Open Enrollment',
+  acquisitionSource: 'Referral',
   score: 50,
   stage: 'engaged',
   theta: 0,
