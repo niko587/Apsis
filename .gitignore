@@ -28,3 +28,7 @@ test-results
 playwright-report
 blob-report
 .playwright
+
+# Secrets — server-side only, never committed, never VITE_-prefixed.
+.env.local
+.env*.local

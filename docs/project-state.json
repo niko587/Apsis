@@ -28,8 +28,8 @@
   },
   "checks": {
     "typescript": "clean (app + node + e2e projects)",
-    "tests": "229/229 passing (15 files)",
-    "e2e": "44/44 passing — 11 llm-command (opt-in interpreter) + 8 reachability + 3 hover-stability (D25) + 3 persistence + 10 progressive-reveal + 9 spatial-focus.",
+    "tests": "302/302 passing (18 files) — includes 58 server tests, all against a fake provider so CI needs no key",
+    "e2e": "48/48 passing — 11 llm-command + 4 host-boundary (bundle secret scan, inert config, activation path) + 8 reachability + 3 hover-stability (D25) + 3 persistence + 10 progressive-reveal + 9 spatial-focus. One intermittent: reachability@1600x1000 wheel-stall, 1 failure in 5 observations, pre-existing and unrelated to the server milestone — see NEXT_ACTIONS 1c.",
     "lint": "exit 0 (R3F idiom warnings in LeadField.tsx only)",
     "build": "green (~1.27MB, 350KB gz)",
     "runtime_console_errors": 0,
@@ -96,15 +96,19 @@
     "Apsis holds no model credential and calls no vendor API: model access is a host-declared endpoint, the payload is the command text plus static vocabulary, and no LLM SDK may enter package.json (D27)",
     "no interpreted clause is applied without a span present verbatim in the user's input — filters and the action alike — and unrecognised language is computed by subtracting accepted spans, never read from the model's own report (D28)",
     "with no interpreter declared, resolveCommand returns the grammar's result synchronously: no promise, no timer, no request (CONTRACT_LLM_COMMAND_PARSING §E)",
+    "the interpreter endpoint is not a trusted component: forced tool use narrows model output, but the browser validator governs what reaches LeadQuery and the server trims for size and shape only — never re-deciding truth (D29)",
+    "the client's posted `schema` is ignored; the server builds its prompt from its own pinned COMMAND_SCHEMA import, and unknown top-level keys are rejected rather than absorbed (D30)",
+    "command text, prompts, model output and envelopes are never logged; logs carry codes, latencies, token counts and error classes (D31)",
+    "rate limiting is cost control, not access control: the per-IP bucket is per-instance on serverless, and the endpoint stays unauthenticated until the auth milestone lands (D31)",
     "Apsis is a browser-only SPA with no server, so any API key reachable by it is public: it must never hold a vendor credential or call a vendor API directly. Model access goes through a host-declared endpoint, and only the user's command text plus a static schema ever leaves the browser — never leads, names, phones, emails, health information or history (CONTRACT_LLM_COMMAND_PARSING §L)",
     "an LLM may never be trusted to report what it failed to understand: every mapped filter must cite a span present verbatim in the input, and unrecognised text is computed by subtracting verified spans — the same way parseCommand earns it (CONTRACT_LLM_COMMAND_PARSING §H)"
   ],
   "blocked": [],
   "current_milestone": {
-    "name": "host interpreter endpoint (first server boundary)",
-    "contract": "docs/CONTRACT_HOST_INTERPRETER_ENDPOINT.md",
-    "status": "contract written and binding, NOT implemented",
-    "shape": "POST /api/interpret, same origin, Node 22, plain Request->Response handler in server/ with a 3-line platform adapter in api/; Anthropic via fetch with forced tool use; no SDK and no new dependency so D27 stands; default model claude-haiku-4-5-20251001 via APSIS_MODEL",
+    "name": "authentication for /api/interpret",
+    "contract": "not yet written",
+    "status": "NOT STARTED — the endpoint is implemented and deliberately not safe to expose publicly until identity exists at the boundary",
+    "previous_milestone": "host interpreter endpoint — IMPLEMENTED at this checkpoint (D29-D31). POST /api/interpret, same origin, Node 22, plain Request->Response in server/ with a 3-line adapter in api/; Anthropic via fetch with forced tool use; no SDK and no new dependency so D27 stands; default model claude-haiku-4-5-20251001 via APSIS_MODEL. NO REAL-KEY CALL HAS BEEN MADE — every test uses a fake provider, so the vendor wire format is asserted but not confirmed against the live API",
     "honest_gap": "the endpoint is unauthenticated and backed by a metered vendor key: rate limiting, size caps, same-origin checks and a vendor spend cap are cost control, not access control. Authentication is the NEXT milestone and must be stated in the README before any public URL exists"
   },
   "performance": {

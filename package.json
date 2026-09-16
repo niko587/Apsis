@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:api": "node --env-file-if-exists=.env.local scripts/dev-interpreter.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "typecheck": "tsc -b",

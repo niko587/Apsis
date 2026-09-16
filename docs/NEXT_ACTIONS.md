@@ -113,7 +113,7 @@ rendered.
 **Still to do:** owner verification on the real machine, and a host endpoint —
 see §1a, which is now the current milestone.
 
-## 1a. Host interpreter endpoint — **CURRENT MILESTONE**
+## 1a. (closed) Host interpreter endpoint — IMPLEMENTED, owner verification pending
 **MODEL: OPUS.** Contract written and committed:
 **`docs/CONTRACT_HOST_INTERPRETER_ENDPOINT.md`** — runtime choice, directory
 layout, endpoint contract, provider interface, model recommendation, secret
@@ -144,11 +144,41 @@ key**, and the default build still making zero network requests —
 `e2e/llm-command.spec.ts` must pass unmodified, which is what proves the client
 does not care whether this endpoint exists.
 
+**Delivered** in `server/` (prompt, guard, provider, interpret + 3 test files),
+`api/interpret.ts`, `scripts/dev-interpreter.mjs`, `public/apsis-config.js`,
+`tsconfig.server.json`, one `<script>` in `index.html`, a `/api` dev proxy and a
+`dev:api` script. **No new dependency; `src/**` unchanged.** D29–D31.
+
 **Stated plainly, not buried:** the endpoint is unauthenticated and backed by a
 metered vendor key, so anyone who can reach it can spend it. Rate limiting,
 size caps, same-origin checks and a vendor spend cap are cost control, not
-access control. **Authentication is the next milestone** and the README must say
-so before any public URL exists.
+access control. The README says so. **No real-key call has been made** — every
+test uses a fake provider, so the vendor request/response shape is asserted but
+not yet confirmed against the live API.
+
+## 1b. Next: authentication before any public deployment — **CURRENT MILESTONE**
+The endpoint works and is deliberately not safe to expose. Until identity exists
+at the boundary, a public URL is a metered resource left unlocked. Scope: who
+may call `/api/interpret`, how the browser proves it, and what the limiter keys
+on once it has something better than an IP.
+
+## 1c. (open, pre-existing) Reachability wheel-stall flake
+`e2e/reachability.spec.ts:198 @1600x1000` failed **once** during this milestone.
+Measured afterwards: green on the next full suite (48/48) and **44/44 across a
+4× repeat of the whole reachability spec** — so roughly one failure in five
+observations, not a standing red. **Not caused by this work** — nothing in
+`src/`, the CSS or the rail changed; `index.html` gained one classic
+`<script>` tag, which cannot move layout.
+The mechanism is the documented tolerance in `wheelIntoView`: with the live feed
+on, the rail can sit at max scroll when a wheel tick fires, stall three times,
+and be abandoned just as the Live Activity panel grows another row — leaving the
+last panel a few px below a fold that scrolling could now reach
+(`top=1028 bottom=1040` in a 1000px viewport, `afterWheelTicks=3`). A stall
+count cannot tell "cannot scroll" from "briefly at the bottom of a document that
+is still growing".
+Fixing it means making the helper wait on the rail's `scrollHeight` settling
+rather than counting stalls. Out of this milestone's file boundaries; recorded
+rather than quietly patched.
 
 **One deviation from the contract, flagged rather than buried:** the response
 envelope gained an optional `actionSpan`. §G specified provenance for filters

@@ -24,7 +24,70 @@ npm run check     # all five gates, the same set CI runs
 ```
 
 `npm run test:e2e` needs browsers once: `npx playwright install chromium`.
-URL params: `?leads=N` book size, `?fx=off` disables post-processing.
+URL params: `?leads=N` book size, `?fx=off` disables post-processing,
+`?interpreter=off` forces the built-in command grammar.
+
+**No credential is needed to work on Apsis.** The command bar runs a
+deterministic grammar; the optional language-model interpreter is off unless a
+host turns it on.
+
+## The optional language-model interpreter
+
+Apsis can interpret commands with a language model instead of its built-in
+grammar. It is **opt-in, off by default, and inert as shipped** — with nothing
+configured the app makes no network requests at all, and the browser suite
+asserts exactly that.
+
+**Apsis never holds a model credential.** It is a browser-only SPA, so any key
+it could reach would be public: `VITE_*` values are inlined into the bundle at
+build time and `import.meta.env` is readable in devtools. Instead the browser
+POSTs to an endpoint *you* operate, which holds the key server-side. This repo
+ships that endpoint (`api/interpret.ts` → `server/`), but it is your deployment
+and your key.
+
+### What is sent, and what is not
+
+| sent to the model provider | never sent |
+|---|---|
+| the text you type into the command bar | any lead or customer record |
+| the static vocabulary (stages, segments, city and state names) | names, phone numbers, email addresses |
+| | scores, intent, coverage, occupation |
+| | event history, the persisted log, book counts |
+
+The model is a language interpreter, not a lead database: mapping "hot leads in
+Florida" needs to know that `hot` and `FL` exist, not who they are. A test
+asserts this against a 500-lead book. **Your command text does reach the
+provider** — if you type a customer's name into the command bar, that text is
+sent. Command text is never written to the endpoint's logs.
+
+### Enable it
+
+```bash
+cat > .env.local <<'EOF'          # gitignored; never VITE_-prefixed
+ANTHROPIC_API_KEY=sk-ant-...
+APSIS_MODEL=claude-haiku-4-5-20251001
+APSIS_ALLOWED_ORIGIN=http://localhost:5173
+EOF
+
+npm run dev:api                    # interpreter endpoint on :8787
+npm run dev                        # Vite on :5173, proxying /api
+```
+
+Then uncomment the declaration in `public/apsis-config.js`. The key lives only
+in the `dev:api` process — it never enters Vite, and never enters the bundle.
+
+### Read this before deploying it publicly
+
+- **The endpoint is unauthenticated.** Anyone who can reach it can spend your
+  model budget.
+- **Rate limiting is not authentication.** The per-IP limiter is coarse cost
+  control, and on serverless it is per-instance rather than global.
+- **Set a spend cap at your provider.** It is the only control that cannot be
+  argued with.
+- **Authentication is the next milestone.** Until it lands, treat a public
+  deployment as a metered resource you have left unlocked.
+
+Full design: `docs/CONTRACT_HOST_INTERPRETER_ENDPOINT.md`.
 
 ## Architecture
 

@@ -1,7 +1,7 @@
 # Current State
 
-_Last updated: 2026-09-16 (host interpreter endpoint contract; previous phase:
-opt-in LLM command parsing)_
+_Last updated: 2026-09-16 (host interpreter endpoint implemented; previous
+phase: opt-in LLM command parsing)_
 
 This file is the snapshot an external AI project manager should trust over any
 conversation history. It describes the repository as it actually is.
@@ -10,9 +10,9 @@ conversation history. It describes the repository as it actually is.
 
 | Check | Status | Command |
 |---|---|---|
-| TypeScript | clean (3 projects: app, node, e2e) | `npm run typecheck` |
-| Unit tests | **229 / 229 passing** (15 files) | `npm test` |
-| Browser suite | **44 / 44 passing** | `npm run test:e2e` |
+| TypeScript | clean (4 projects: app, node, e2e, server) | `npm run typecheck` |
+| Unit tests | **302 / 302 passing** (18 files) | `npm test` |
+| Browser suite | **48 / 48 passing** | `npm run test:e2e` |
 | Lint | exit 0 (warnings only, see below) | `npm run lint` |
 | Production build | green, ~1.27 MB bundle (350 KB gz) | `npm run build` |
 | Runtime console | 0 errors at load and through drill/command flows | — |
@@ -341,7 +341,7 @@ a credential to the browser. Building that endpoint is the current milestone
 multi-model invocation (the environment provides no mechanism; the orchestrator
 correctly reports ASSISTED) and any authentication.
 
-## Current milestone: the host interpreter endpoint (2026-09-16, contract only)
+## Host interpreter endpoint (2026-09-16) — Apsis's first server-side code
 
 Apsis's first server-side code. `POST /api/interpret`, same origin, Node 22, a
 plain `Request → Response` handler in `server/` with a three-line platform
@@ -355,7 +355,24 @@ the browser validator still governs what reaches `LeadQuery`, and if the
 endpoint vanishes the product keeps working. `e2e/llm-command.spec.ts` must pass
 unmodified — that is the proof.
 
-Stated plainly rather than buried: the endpoint will be **unauthenticated** and
+**Delivered:** `server/{prompt,guard,provider,interpret}.ts` plus three test
+files, `api/interpret.ts` (a three-line adapter), `scripts/dev-interpreter.mjs`,
+`public/apsis-config.js` (inert), `tsconfig.server.json`, one `<script>` tag in
+`index.html`, a `/api` dev proxy and a `dev:api` script. **No new dependency and
+`src/**` unchanged** — the client was finished and had to stay that way, which
+is what `e2e/llm-command.spec.ts` passing unmodified proves.
+
+58 server tests, all against a fake provider, so CI needs no key. Both
+directions are treated as untrusted: browser input (method, origin,
+content-type, an 8 KB streamed cap, 512-character text, closed key set) and
+model output (tool call required, 32 filters max, spans clipped).
+
+Stated plainly rather than buried: the endpoint is **unauthenticated** and
 backed by a metered vendor key, so anyone who can reach it can spend it. Rate
 limiting, size caps, same-origin checks and a vendor spend cap are cost control,
-not access control. Authentication is the milestone after it.
+not access control, and on serverless the per-IP bucket is per-instance.
+Authentication is the milestone after it, and the README says so.
+
+**No real-key call has been made.** The vendor request and response shapes are
+asserted against a fake provider; they are not yet confirmed against the live
+API. That is the first thing to do with a key in hand.

@@ -319,3 +319,57 @@ the interpreter skipped — "tampa" — is therefore still surfaced, which is
 precisely the failure worth seeing.
 Forbids: trusting a model's account of what it understood; applying any clause
 without verifiable provenance; duplicating the grammar's stop-word list.
+
+## D29 — The endpoint is not a trusted component
+(2026-09-16) Apsis's first server-side code: `POST /api/interpret`, same origin,
+a plain `Request -> Response` in `server/` with a three-line platform adapter in
+`api/`. Anthropic over `fetch` with forced tool use; no SDK on the server
+either, so D27 stands unamended and no dependency ever sits between Apsis and a
+credential. Default `claude-haiku-4-5-20251001`, escalated by `APSIS_MODEL`
+alone.
+The shape follows from one fact: the client shipped first and does not need
+this. Forced tool use narrows what a model can say, but a schema-shaped lie —
+real field, plausible value, a span nobody typed — is still expressible, so the
+browser validator stays authoritative and the server trims for size and shape
+rather than re-deciding truth. Two validators meant to agree eventually
+disagree, and the browser's is the one governing what reaches `LeadQuery`.
+The acceptance criterion that proves it: `src/**` unchanged and
+`e2e/llm-command.spec.ts` passing UNMODIFIED, including its zero-network case.
+Forbids: moving semantic validation into the server; any handler branch that can
+throw out of the top (an unhandled error becomes a platform 500 with an
+unpredictable body, so there is a floor under it); retries.
+
+## D30 — The client's schema is data about the client, never an instruction
+(2026-09-16) The browser posts `{ text, schema }` and the server **ignores
+`schema` entirely**, building its prompt from its own pinned import of
+`COMMAND_SCHEMA`. That is the schema-injection answer: a client-supplied
+vocabulary is an instruction from an untrusted party, and accepting one would
+let anybody rewrite what Apsis asks the model — or inflate the payload for cost.
+Importing the same object the browser validator enforces means the list the
+model is told about and the list its answer is judged against cannot drift.
+Unknown top-level keys are rejected rather than ignored, so a client that starts
+sending more than agreed is noticed instead of absorbed.
+Both directions are untrusted: browser input (method, origin, content-type,
+8 KB streamed cap, 512-character text, shape) and model output (tool call
+required, 32 filters max, spans clipped). The size cap streams and counts rather
+than buffering and measuring, because reading an 8 MB body and rejecting it
+afterwards is not a limit.
+Forbids: reading any field of the client's `schema`; parsing a body before
+capping it; returning a vendor message, prompt, stack or key to the browser.
+
+## D31 — Command text is PII, and rate limiting is not authentication
+(2026-09-16) Two things this milestone refuses to pretend.
+**Logging.** Command text is never logged by default: a user types "find the
+Moreau lead" and a command log becomes a PII log wearing a different hat.
+Prompts, model output and envelopes are equally absent — an envelope carries
+spans, which are verbatim fragments of the command. Logs carry timestamp,
+request id, outcome code, latencies, token counts, model id and an error class.
+**Abuse.** The endpoint is unauthenticated and backed by a metered vendor key,
+so anyone who can reach it can spend it. Same-origin checks, size caps and the
+per-IP token bucket are COST CONTROL and friction; on serverless the bucket is
+per-instance, so the real ceiling is roughly instances × limit. The layers that
+enforce are the platform's rate limiter and a vendor spend cap. This is written
+into the README, not just here, because a reader deciding whether to deploy is
+the person who needs it.
+Forbids: describing the limiter as access control; enabling text logging in
+production; a public deployment before authentication lands.

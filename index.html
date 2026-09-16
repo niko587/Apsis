@@ -8,6 +8,9 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Host configuration, loaded before the app so a declared interpreter is
+         visible on the first command. Inert as committed: see the file. -->
+    <script src="/apsis-config.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
