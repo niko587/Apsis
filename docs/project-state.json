@@ -28,8 +28,8 @@
   },
   "checks": {
     "typescript": "clean (app + node + e2e projects)",
-    "tests": "110/110 passing (9 files)",
-    "e2e": "8/8 passing (3 viewports); asserts the click point, not whole-box containment (D21); proven to fail on the D12 regression",
+    "tests": "133/133 passing (10 files)",
+    "e2e": "11/11 passing — 8 reachability (D21) + 3 browser reload/persistence tests",
     "lint": "exit 0 (R3F idiom warnings in LeadField.tsx only)",
     "build": "green (~1.27MB, 350KB gz)",
     "runtime_console_errors": 0,
@@ -67,7 +67,7 @@
     { "key": "model-orchestrator", "spec": "§30-40", "status": "real in ASSISTED mode; programmatic invocation missing (no host mechanism)", "files": ["src/orchestrator/"] },
     { "key": "task-decomposition", "spec": "§38", "status": "missing", "files": [] },
     { "key": "transport", "spec": "§19", "status": "seam PROVEN — two concrete sources behind one LeadSource contract (simulator + replay); still no real backend", "files": ["src/state/source.ts", "src/state/sources.ts", "src/state/replay.ts", "src/state/fixtures/demoSession.ts"] },
-    { "key": "persistence", "spec": "-", "status": "missing — NEXT MILESTONE; the replay format + recorder already serialize the canonical event stream", "files": [] },
+    { "key": "persistence", "spec": "-", "status": "real (v1) — canonical event log in IndexedDB, replayed through ingest on boot; corruption fails loudly; two-step reset; replay mode isolated (D23)", "files": ["src/state/persistence.ts", "src/state/boot.ts", "e2e/persistence.spec.ts"] },
     { "key": "nationwide-book", "spec": "-", "status": "real (90 metros, 50 states + DC, population-weighted)", "files": ["src/domain/geography.ts", "src/domain/seed.ts"] },
     { "key": "reachability-e2e", "spec": "-", "status": "real (D20); proven to catch the D12 regression", "files": ["e2e/reachability.spec.ts", "playwright.config.ts"] },
     { "key": "ci", "spec": "-", "status": "real", "files": [".github/workflows/ci.yml"] }
@@ -85,7 +85,8 @@
     "reachability is proven with real input events (wheel + elementFromPoint + click), never scrollIntoView or Playwright auto-scroll (D20)",
     "never rewrite published history on main without owner instruction (D19)",
     "reachability asserts that the click point is on screen and hit-tests to the target, never pixel-perfect bounding-box containment (D21)",
-    "every incoming LeadEvent reaches state through ingest(); a source may never touch the store directly (D22)"
+    "every incoming LeadEvent reaches state through ingest(); a source may never touch the store directly (D22)",
+    "persistence restores by replaying the event log through ingest, never by writing store fields; corrupt history is discarded, never partially applied (D23)"
   ],
   "blocked": [],
   "performance": {

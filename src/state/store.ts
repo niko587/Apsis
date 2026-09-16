@@ -154,12 +154,23 @@ function computeTelemetry(leads: Map<string, Lead>, feed: LeadEvent[], now: numb
 const INITIAL_LEAD_COUNT = 4892;
 
 /**
+ * The book's seed. Exported so persistence can record which book a saved event
+ * log belongs to — replaying a log onto a different book would apply real events
+ * to the wrong leads.
+ */
+export const BOOK_SEED = 0x5f3a21;
+
+/**
  * Book size, overridable with `?leads=N`.
  *
  * Kept as a real knob rather than a test-only hack: §20 asks for the experience
  * to hold up "with thousands of leads", and the only way to know where it stops
  * holding up is to be able to turn it past the default and watch.
  */
+export function bookLeadCount(): number {
+  return leadCount();
+}
+
 function leadCount(): number {
   if (typeof window === 'undefined') return INITIAL_LEAD_COUNT;
   const raw = new URLSearchParams(window.location.search).get('leads');
@@ -170,7 +181,7 @@ function leadCount(): number {
 function init() {
   const now = Date.now();
   const leads = new Map<string, Lead>();
-  const seeded = seedLeads(leadCount(), 0x5f3a21, now);
+  const seeded = seedLeads(leadCount(), BOOK_SEED, now);
   for (const l of seeded) leads.set(l.id, l);
   // Leads that START booked need an appointment record too.
   //

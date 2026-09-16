@@ -137,6 +137,86 @@ Implement `LeadSource`, translate the wire payload into `LeadEvent`, call
 (`sms.replied`) need a translation layer at this boundary — see the §18
 divergence below — and nothing above the seam changes.
 
+## Persistence v1 (`src/state/persistence.ts`, `src/state/boot.ts`)
+
+The saved file is **not** an alternate authoritative store. It is a durable copy
+of the canonical event log, and restoring means replaying it through the same
+`ingest` a live source uses:
+
+```
+saved log → validate → hydrate → ingest → scoring → store → gravity → UI
+```
+
+No second mutation mechanism exists; nothing in persistence writes a store field.
+
+**Why this is even possible.** `seedLeads` derives every lead's score, stage,
+theta and inclination from a pure `rng(seed)` stream, so a fresh book is
+reproducible across reloads; only `createdAt`/`lastEventAt` shift with the
+clock, and `applyEvent` depends on nothing but the prior score and the kind.
+Replaying a saved log onto a freshly seeded book therefore reproduces scores and
+stages exactly. Because the same log against a *different* book would land on
+different leads, `{ seed, leadCount }` is recorded and checked on load.
+
+**Storage: IndexedDB.** The simulator emits ~9 events/sec, so an hour is ~32,000
+events — several megabytes. localStorage caps near 5MB and is synchronous on the
+main thread, which this project spent seven rounds learning to keep clear. IDB
+is async and roomy, so a write cannot jank a frame. It sits behind a
+`SessionStore` interface (`load`/`save`/`clear`/`available`) with an in-memory
+implementation used by tests, so the domain never imports a storage API.
+
+**Format (version 1)**
+
+```jsonc
+{
+  "version": 1,
+  "savedAt": 1700000000000,
+  "book": { "seed": 6241313, "leadCount": 4892 },
+  "sealed": false,
+  "events": [ { "offsetMs": 0, "event": { /* LeadEvent */ } } ]
+}
+```
+
+Event validation is delegated to `parseSession`, so there is exactly one
+definition of a well-formed log in the codebase.
+
+**Boot order.** `bootSession()` is a module-level singleton promise: restore
+fully, *then* start recording, *then* let `App` start a source. Two failures it
+prevents — a source starting mid-hydration would interleave live events with
+restored history and record the mixture; and React StrictMode's double-invoked
+effects would otherwise hydrate the log twice, double-applying every event.
+
+**Write policy.** Debounced (1.5s) and *chained, never concurrent* — two
+in-flight writes could land in either order and leave a shorter log on top of a
+longer one. `pagehide` forces a flush so a tab close does not lose the tail.
+
+**Corruption policy — fail loudly, never plausibly.**
+
+| condition | behaviour |
+|---|---|
+| empty storage | fresh seeded book (unchanged default) |
+| unknown version | discard, clear the slot, start fresh, report |
+| malformed record or any invalid event | discard, clear the slot, start fresh, report |
+| book mismatch (`?leads=N` changed) | **do not apply**, **keep** the saved log, start fresh, report |
+| storage unavailable or a write throws | app keeps running, durability off, reported in diagnostics |
+
+Nothing is ever partially applied: a half-restored history is a believable
+session that never happened, which is worse than starting clean and saying so.
+
+**Cap.** At `MAX_PERSISTED_EVENTS` (50,000 ≈ 90 minutes) the log is **sealed**
+rather than trimmed. A sealed log is a correct *prefix* of the session, so it
+restores to a state the session genuinely passed through; dropping the oldest
+events would restore a state it never had.
+
+**Restored:** lead scores, stages, positions (derived from score), the
+appointment ledger, booked count, feed history (last 200), agent attribution
+carried on each event, telemetry. **Not restored, by design:** in-flight
+`AgentTask` arcs (transport-side simulation, not domain events), camera, drill
+path, selection, command state, and diagnostics.
+
+**Source interaction.** `/` and `?source=sim` restore then continue recording.
+`?source=replay` is **isolated** — it neither reads nor writes the persisted
+session, so the demo fixture can never overwrite a real book.
+
 ## Event architecture
 
 `LeadEventKind` is a **flat union** (replied, opened, contacted,

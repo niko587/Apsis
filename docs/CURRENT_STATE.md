@@ -135,6 +135,46 @@ transport-side simulation rather than domain events. Replayed events still
 carry their original `agentId`, so attribution survives; only the in-flight
 animation does not. Decay is a no-op over any recordable session (72h grace).
 
+## Persistence v1 (2026-09-16) — sessions survive a reload
+
+**Apsis no longer resets when the browser refreshes.** The canonical event log
+is written to IndexedDB and replayed through `ingest` on boot; the domain stays
+authoritative and no second mutation mechanism exists.
+
+- **Storage:** IndexedDB behind a `SessionStore` interface (`load`/`save`/
+  `clear`/`available`), with an in-memory implementation for tests so the domain
+  never imports a storage API. Chosen over localStorage because ~9 events/sec is
+  several MB an hour and localStorage is synchronous on the main thread.
+- **Boot order:** `bootSession()` is a singleton promise — restore fully, then
+  record, then start a source. This prevents live events interleaving with
+  restored history, and stops React StrictMode's double-invoked effects from
+  hydrating the log twice.
+- **Writes:** trailing *throttle* (1.5s), chained never concurrent, flushed on
+  `pagehide`.
+- **Reset:** a two-step "Reset session → Confirm reset" button in the existing
+  topbar language; clears storage and reloads to the seeded book.
+- **Replay isolation:** `?source=replay` neither reads nor writes the persisted
+  session, so the demo fixture cannot overwrite a real book.
+- **23 unit tests + 3 browser reload tests** (110 → 133 unit).
+
+**Corruption policy — fail loudly, never plausibly.** Unknown version, malformed
+record or any invalid event ⇒ discard, clear the slot, start fresh, report. Book
+mismatch (`?leads=N` changed) ⇒ do not apply, *keep* the log, start fresh.
+Storage unavailable or a write throwing ⇒ the app keeps running with durability
+off and says so in diagnostics. Nothing is ever partially applied.
+
+**Restored:** scores, stages, positions, the appointment ledger, booked count,
+feed history, agent attribution, telemetry. **Not restored by design:**
+in-flight agent arcs (transport-side simulation, not domain events), camera,
+drill path, selection, command state.
+
+**Two bugs found by testing rather than by reading**, both worth recording:
+the diagnostics status was a snapshot captured at boot, so it reported "0
+events" forever; and the write scheduler was a trailing *debounce*, which under
+a continuous ~9/sec feed was cancelled and rescheduled before it could ever
+fire — **nothing was persisted at all, with no error to show for it**. The
+browser reload test caught both; the unit suite was entirely happy.
+
 ## In flight right now
 
 Nothing mid-edit. The working tree is consistent and all checks are green.

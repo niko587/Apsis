@@ -43,21 +43,14 @@ timing, clean stop, determinism and a record → serialize → replay round trip
 Browser-verified: the booked centre advanced through the real pipeline with no
 console errors. See `ARCHITECTURE.md` → "The source contract".
 
-## 1. Persistence v1 — NEXT MILESTONE
-**What:** Snapshot/rehydrate so reload does not reseed: persist the event log
-(or book + log tail) to localStorage/IndexedDB behind a small interface in
-`src/state/`, restoring through `ingest` so the one-mutator law holds.
-**Why it is now next:** Arc A closed, and it built most of this item's
-foundation. The versioned replay format, the validating parser and
-`createSessionRecorder` already serialize the canonical event stream and
-restore it through `ingest` — persistence is largely "write that same log to
-IndexedDB and rehydrate on boot", plus a reset control. The one-mutator law
-(D1) stays intact because rehydration replays events rather than setting state.
-**Acceptance:** reload preserves scores/stages/appointments; a "reset book"
-control exists; tests cover snapshot round-trip; D1 untouched.
-**Model:** Opus.
+## 0c. (closed) Persistence v1 — sessions survive reload
+Canonical event log in IndexedDB, replayed through `ingest` on boot behind a
+singleton boot promise (restore → record → source). Two-step Reset control.
+`?source=replay` isolated. 23 unit tests + 3 browser reload tests. Corruption
+fails loudly and never partially applies. See `ARCHITECTURE.md` → "Persistence
+v1" and D23.
 
-## 2. Remaining §15 drill dimensions
+## 1. Remaining §15 drill dimensions — NEXT MILESTONE
 **What:** Add `campaign` and `source` fields to the domain + seed (weighted,
 deterministic), then registry entries for campaign / source / agent /
 timeframe; UI needs nothing new (registry-driven).
@@ -66,7 +59,7 @@ sum to members — existing test pattern); parser optionally learns
 `from <campaign>` later.
 **Model:** Opus (domain), no visual work needed.
 
-## 3. §14 spatial individual transition
+## 2. §14 spatial individual transition
 **What:** At full drill depth + selection, resolve the lead in-field (camera
 completes the approach; a compact in-scene card or emphasized node), demoting
 the rail panel to secondary.
@@ -75,7 +68,7 @@ camera journey; reduced-motion path preserved; a11y parity (selection still
 announced, panel still exists).
 **Model:** Fable, with the CameraRig contract from `ARCHITECTURE.md`.
 
-## 4. LLM command parsing (opt-in)
+## 3. LLM command parsing (opt-in)
 **What:** `parseCommand` alternative returning the same `LeadQuery` via a
 model call, gated on a configured key; grammar remains the fallback; ignored-
 words honesty must survive (model must report unmapped clauses).
@@ -83,7 +76,7 @@ words honesty must survive (model must report unmapped clauses).
 phrasings parse; funnel/execution untouched.
 **Model:** Opus.
 
-## 5. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
+## 4. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
 **What:** precompute stage colours as RGB triples so no colour string is parsed
 in a hot path, and add an out-parameter `positionInto(lead, out)` so the frame
 path allocates nothing.

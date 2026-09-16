@@ -179,3 +179,31 @@ not recreate in-flight `AgentTask` arcs, because tasks are transport-side
 simulation, not domain events. Attribution survives via each event's `agentId`.
 Forbids: any incoming-event path that reaches state without going through
 `ingest`.
+
+## D23 — Persistence restores by replaying events, never by writing state
+(2026-09-16) Persistence v1. The saved record is a durable copy of the canonical
+event log, not an alternate authoritative store: restoring means replaying it
+through the same `ingest` a live source uses, so D1 (one mutator) survives
+intact and there is no second way for state to change.
+This is only sound because `seedLeads` derives score, stage, theta and
+inclination from a pure `rng(seed)` stream — a fresh book is reproducible, and
+`applyEvent` depends on nothing but the prior score and the kind. The same log
+against a *different* book would land on different leads, so `{seed, leadCount}`
+is recorded and checked; a mismatch refuses to apply and keeps the log.
+IndexedDB over localStorage: ~9 events/sec is several MB an hour, and
+localStorage is synchronous on the main thread, which seven rounds of
+performance work went into keeping clear.
+Boot is a singleton promise — restore, then record, then start a source.
+Two failures it prevents: a source starting mid-hydration interleaves live
+events with restored history and records the mixture; and StrictMode's
+double-invoked effects would hydrate the log twice.
+At `MAX_PERSISTED_EVENTS` the log is SEALED, not trimmed: a sealed log is a
+correct *prefix* of the session, while dropping the oldest events would restore
+a state the session never passed through.
+Corruption policy: unknown version, malformed record or any invalid event ⇒
+discard, clear, start fresh, report. Never partially apply — a half-restored
+history is a believable session that never happened.
+Recorded because it was found the hard way: the write scheduler must be a
+trailing THROTTLE, not a debounce. A debounce that restarts on every event never
+fires while events keep arriving, and at ~9/sec it silently persisted nothing
+with no error raised. Forbids: debouncing a write against a continuous stream.

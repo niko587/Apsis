@@ -5,10 +5,12 @@
  * so the HUD and the field can never disagree.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Universe } from './universe/Universe';
 import { useApsis } from './state/store';
 import { createConfiguredSource } from './state/sources';
+import { bootSession, refreshPersistenceStatus } from './state/boot';
+import type { PersistenceController } from './state/persistence';
 import { STAGES, STAGE_ORDER, bandLabel } from './domain/types';
 import { LeadDetail } from './ui/LeadDetail';
 import { AgentRoster } from './ui/AgentRoster';
@@ -102,21 +104,83 @@ function Telemetry() {
   );
 }
 
+/**
+ * Reset control (§ Persistence v1).
+ *
+ * Two-step rather than a modal: destroying a session needs a deliberate second
+ * action, and the existing shell has no dialog pattern to borrow. The armed
+ * state disarms itself after a few seconds so a stray click cannot leave a
+ * loaded gun in the toolbar. Reload is what restores the seeded book, because
+ * the store seeds once at module load — no second reset path to keep correct.
+ */
+function ResetSession({ controller }: { controller: React.RefObject<PersistenceController | null> }) {
+  const [armed, setArmed] = useState(false);
+
+  useEffect(() => {
+    if (!armed) return;
+    const id = window.setTimeout(() => setArmed(false), 4000);
+    return () => window.clearTimeout(id);
+  }, [armed]);
+
+  return (
+    <button
+      className="toggle"
+      title="Clear the saved session and reseed the book"
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        void (controller.current?.clear() ?? Promise.resolve()).then(() => window.location.reload());
+      }}
+    >
+      {armed ? 'Confirm reset' : 'Reset session'}
+    </button>
+  );
+}
+
 export default function App() {
   const [live, setLive] = useState(true);
+  const [booting, setBooting] = useState(true);
+  const persistence = useRef<PersistenceController | null>(null);
   const booked = useApsis((s) => s.telemetry.booked);
+
+  // Restore the saved session BEFORE any source runs. `bootSession` is a
+  // singleton promise, so React StrictMode's double-invoke cannot hydrate the
+  // log twice — which would double-apply every event in it.
+  useEffect(() => {
+    let cancelled = false;
+    void bootSession().then(({ controller }) => {
+      if (cancelled) return;
+      persistence.current = controller;
+      refreshPersistenceStatus(controller);
+      setBooting(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Durability across a tab close: the debounced write may not have fired yet.
+  useEffect(() => {
+    const flush = () => void persistence.current?.flush();
+    window.addEventListener('pagehide', flush);
+    return () => window.removeEventListener('pagehide', flush);
+  }, []);
 
   useEffect(() => {
     // `?feed=off` silences the event source for diagnosis — it is the trigger
     // for the per-event full-book revision walk, so removing it separates that
     // cost from steady-state rendering. Defaults to on.
-    if (!live || !DIAG.feed) return;
+    // Wait for restore to finish: starting a source mid-hydration would
+    // interleave live events with restored history and record the mixture.
+    if (booting || !live || !DIAG.feed) return;
     // `?source=replay` swaps the transport; everything downstream — scoring,
     // gravity, agents, the rail, the Universe — is unaware which one is running.
     const source = createConfiguredSource();
     source.start();
     return () => source.stop();
-  }, [live]);
+  }, [live, booting]);
 
   // All no-ops without their flags.
   useEffect(() => {
@@ -141,6 +205,7 @@ export default function App() {
         <button className="toggle" onClick={() => setLive((v) => !v)}>
           {live ? 'Pause feed' : 'Resume feed'}
         </button>
+        <ResetSession controller={persistence} />
       </header>
 
       {/* The canvas is a presentation of data that is also published as real DOM

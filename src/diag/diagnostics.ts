@@ -657,6 +657,10 @@ function renderJankReport(r: ReturnType<typeof jankReport>, mode: string): void 
   lines.push(
     `source=${new URLSearchParams(window.location.search).get('source') === 'replay' ? 'replay' : 'simulator'}`,
   );
+  // Imported lazily-ish via a global the boot module publishes, so diagnostics
+  // never become a load-bearing dependency of state.
+  const persist = (window as unknown as { __apsisPersistence?: () => unknown }).__apsisPersistence?.();
+  lines.push(`persistence=${persist ? JSON.stringify(persist) : 'isolated/none'}`);
   const c = readCapabilities(probedRenderer ?? undefined);
   lines.push(`BUILD MODE = ${c.buildMode.toUpperCase()}   (no longer inferred from the port)`);
   lines.push(
