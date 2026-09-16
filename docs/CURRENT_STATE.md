@@ -1,7 +1,7 @@
 # Current State
 
-_Last updated: 2026-09-16 (dynamic drill dimensions contract; previous phase:
-authentication)_
+_Last updated: 2026-09-16 (dynamic drill contract + correctness revision;
+previous phase: authentication)_
 
 This file is the snapshot an external AI project manager should trust over any
 conversation history. It describes the repository as it actually is.
@@ -415,11 +415,33 @@ explicit constant, because making focus depth data-dependent would make
 never rewritten — with nothing persisted, since a restored `timeframe · Today`
 is empty by the next morning.
 
-**The architectural proof is a file boundary:** `LeadField.tsx` and
-`LeadList.tsx` must not change. Emphasis, recession and the roster already
-derive from `matchesPath`, so a dynamic path enters through the existing door.
-If either needs an edit, the design is wrong. Score remains the only thing that
-moves a lead.
+**The architectural proof is a file boundary:** `LeadField.tsx` must not change.
+Emphasis and recession already derive from `matchesPath`, so a dynamic path
+enters through the existing door. Score remains the only thing that moves a lead.
+
+**Correctness revision (D52–D54), before any code.** Review found four problems,
+three of them contradictions inside the contract itself:
+
+- **`agent` is not available on a fresh book.** Every seeded lead is
+  `ownerAgentId: null`, so it has one child — the draft claimed both "offered
+  only when it splits" and "all nine available at GLOBAL". Rule kept, claim
+  withdrawn; no fake seed data, no special case.
+- **The depth default cannot be trusted blindly (D52).** `Agent → Timeframe →
+  Segment` leaves a depth whose default is already used; `City` leaves one whose
+  default `state` is already determined. One `effectiveNextDimension` function
+  now resolves *past* an unusable default, and the heading, picker and child list
+  all read it.
+- **A single-pass iterator (D53).** Production passes `leads.values()`, so a
+  dimension-outer/lead-inner loop would report every dimension after the first
+  as unavailable — a picker that only ever offers `region`, with nothing looking
+  wrong in the code.
+- **The 150-row cap was re-measured (D54).** Enumerating every reachable
+  four-step path on the seeded book gives a **maximum terminal of 266**
+  (`Northeast → New York → New York, NY → Cold`), with 28 over 150. The
+  progressive-reveal guarantee that a full-depth cluster is never truncated is
+  **withdrawn**. `LeadList.tsx` still stays forbidden — on evidence: in-cluster
+  search is applied *before* the cap, so every member is one keystroke away, and
+  the header already reads `showing 150 of 266 · narrow the drill or search`.
 
 ## Authentication and access control (2026-09-16) — IMPLEMENTED
 

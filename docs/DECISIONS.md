@@ -758,3 +758,58 @@ not choose. Persisting something merely because a persistence layer exists is
 the failure this policy names.
 Forbids: auto-popping or rewriting a drill path as the book changes; persisting
 navigation state.
+
+## D52 — One function resolves the next grouping, and it may resolve past a default
+(2026-09-16) Contract revision. Resolving `nextDimensionId === null` straight to
+`DRILL_SEQUENCE[path.length]` is wrong after a dynamic path: `Agent → Timeframe
+→ Segment` leaves a depth whose raw default `segment` is already used, and
+`City` at depth 0 leaves a depth whose raw default `state` is already determined
+by the city. Both yield one child, which violates D49 while the heading
+cheerfully announces the dimension.
+`effectiveNextDimension` is the single source of truth: terminal → available →
+still-available selection → depth default if available → first available in
+registry order. The heading, the picker's active state and `clusterChildren` all
+read it, and it returns the availability list it used so the menu cannot be
+computed twice and disagree.
+Resolving past an unusable default is NOT rewriting history: `path` is
+untouched, and a superseded selection is cleared by the next navigation anyway.
+Forbids: deriving the next dimension in more than one place; resolving to a
+dimension that cannot split the current cluster.
+
+## D53 — availableDimensions traverses its iterable exactly once
+(2026-09-16) Production calls it with `leads.values()` — a Map iterator, which
+is **single-pass**. The obvious implementation, `for (dimension) for (lead)`,
+would let only the first dimension see the book and silently report every other
+as unavailable; the symptom would be a picker that only ever offers `region`,
+with nothing in the code looking wrong.
+Required shape: one pass over the iterable with every dimension advanced
+together, retaining at most two distinct keys per dimension and dropping a
+dimension's key set the moment it is proven splittable. O(members × dimensions)
+with bounded tiny memory. A unit test passes a deliberately one-shot generator,
+which a multi-pass implementation fails immediately.
+Forbids: iterating a supplied `Iterable` more than once anywhere in this code
+path.
+
+## D54 — The roster cap was re-measured, and the old guarantee is withdrawn
+(2026-09-16) Progressive reveal recorded that a full-depth cluster never exceeds
+81 members, so `VISIBLE_CAP = 150` could not truncate one. That was measured for
+the FIXED default sequence. Dynamic paths change the question, so it was
+re-measured rather than assumed: every reachable four-step path on the
+deterministic 4,892-lead book was enumerated under the availability rules.
+**The maximum terminal cluster is 266** — `Region · Northeast → State · New York
+→ City · New York, NY → Temperature · Cold` — with 28 terminals over 150 on a
+fresh book (32 once ownership exists; the maximum is unchanged, because `agent`
+only adds narrower paths).
+So the guarantee is false and this project does not repeat it. The cap stays,
+because raising it buys a number rather than a guarantee (a 60k book truncates
+again) and lifting it at terminal depth trades a truthful label for a DOM
+problem at ~3,200 rows. "Fully accessible" is redefined against the mechanism
+that actually exists and was verified in the code: **the in-cluster search
+needle is applied BEFORE the cap**, so a member ranked 200th by score is one
+keystroke away, and the header already says `showing 150 of 266 · narrow the
+drill or search`.
+`LeadList.tsx` therefore stays forbidden — on evidence, not on the withdrawn
+assumption. A regression test pins the measured 266 so a change to the book, the
+dimensions or the rules re-opens this decision instead of drifting past it.
+Forbids: repeating the "every full-depth member is listed" claim; weakening the
+truthful count language; adding virtualisation to solve a case search solves.

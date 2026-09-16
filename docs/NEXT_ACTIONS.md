@@ -1,7 +1,7 @@
 # Next Actions
 
-_Last updated: 2026-09-16 (dynamic drill dimensions contract). Ordered. Each
-item: what, why now, acceptance, suggested model (spec §2)._
+_Last updated: 2026-09-16 (dynamic drill contract, correctness revision).
+Ordered. Each item: what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
 - GitHub bootstrap. Remote exists, `main` canonical, `/docs` browsable (D19).
@@ -292,6 +292,32 @@ depth**: `DRILL_SEQUENCE` is demoted from "the drill order" to "the default
 suggestion", which is the entire architectural change and the reason a user who
 never opens the picker sees today's screen.
 
+**Correctness revision (D52–D54), applied before implementation.** Review found
+three claims that were wrong, and one that was only measured for the old fixed
+sequence:
+
+- **`agent` is not available on a fresh book.** Every seeded lead is
+  `ownerAgentId: null`, so it has exactly one child — the earlier "all nine are
+  available at GLOBAL" claim contradicted the availability rule itself. Rule
+  kept, claim withdrawn (§F.1). No fake seed data and no special case.
+- **A null selection cannot resolve straight to the depth default (D52).**
+  `Agent → Timeframe → Segment` leaves a depth whose default `segment` is
+  already used; `City` leaves a depth whose default `state` is already
+  determined. `effectiveNextDimension` is now the single source of truth and may
+  resolve *past* an unusable default — without touching `path`.
+- **`availableDimensions` must traverse its iterable exactly once (D53).**
+  Production passes `leads.values()`, a single-pass Map iterator, so a
+  dimension-outer/lead-inner loop would report every dimension after the first
+  as unavailable — a picker that only ever offers `region`, with nothing looking
+  wrong in the code.
+- **The 150-row cap was re-measured (D54).** Enumerating every reachable
+  four-step path on the seeded book gives a **maximum terminal of 266**
+  (`Northeast → New York → New York, NY → Cold`), 28 over 150. The old "never
+  more than 81" guarantee is withdrawn. `LeadList.tsx` still stays forbidden,
+  now on evidence: in-cluster search is applied *before* the cap, so every
+  member is one keystroke away and the header already says
+  `showing 150 of 266`.
+
 **Three decisions worth arguing with:**
 1. **One availability rule (D49).** A dimension is offered only if it splits the
    cluster into ≥2 children. That subsumes repeats *and* geography nesting —
@@ -300,7 +326,9 @@ never opens the picker sees today's screen.
 2. **`MAX_DRILL_DEPTH = 4` (D50).** Three files currently read
    `DRILL_SEQUENCE.length` to decide when §14 focus engages, silently coupling it
    to the default path's length. Depth-when-small was rejected: it would make
-   `isIndividualFocus` depend on the book, and it is read *per frame*.
+   `isIndividualFocus` depend on the book, and it is read *per frame*. **No test
+   asserts the two are equal** — that would re-couple what the constant
+   separates, letting a change to a convenience list redefine analytical depth.
 3. **A live path is reported, never rewritten (D51).** Agent ownership,
    timeframe buckets and temperature all move under a standing path. No
    auto-popping, no substituted keys — an honest empty state and the existing way
