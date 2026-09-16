@@ -429,3 +429,32 @@ real ceiling is roughly instances × limit. This is cost control, not
 authentication (D31).
 Forbids: cleanup predicated on state the surrounding code has just made
 impossible; an unbounded identity table; an O(all keys) sweep per request.
+
+## D35 — A stall count cannot measure "cannot scroll" in a living document
+(2026-09-16) `wheelIntoView` treated three consecutive no-movement wheel ticks
+as "cannot scroll farther". The rail is a LIVING document — the activity feed
+gains rows, appointments land — so that conflated two different states and the
+wrong one kept happening: the rail sat at its current maximum when a tick fired,
+the helper banked a stall, the feed added a row, `scrollHeight` grew, and by the
+time the target was reachable the helper had already given up. One observed
+failure had the last panel at `top=1028` in a 1000px viewport with
+`afterWheelTicks=3`. Raising the count would only have made the race rarer,
+which is the tell that the count was never the right question.
+The fix asks what the count was a proxy for. A tick that moves nothing has
+exactly two explanations, and they are distinguishable by looking at the scroll
+extent: NOT at the end of travel means there is room and the wheel could not use
+it — the D12 regression, now caught on the FIRST tick instead of the third, so
+the check got STRICTER. At the end of travel means the only open question is
+whether this bottom is final, which is answered by waiting for `scrollHeight` to
+settle: grew ⇒ keep wheeling, held still ⇒ genuinely unreachable.
+The settle is a bounded predicate, not a sleep: it returns as soon as three
+consecutive 50ms samples agree (~150ms typical) and gives up after ~600ms,
+capped at five settles per call.
+Proven both ways, not argued: reverting `.rail` to `overflow: hidden` turns 7 of
+11 red across all three viewports in 31 seconds, and the previously flaky
+viewport ran 12 consecutive times clean. `src/App.css` restored byte-identical
+afterwards.
+No assertion was weakened — the caller still requires the click point on screen,
+the hit test to resolve to the target, and a real click to land.
+Forbids: counting stalls, raising a stall threshold, or adding a sleep, to
+paper over a container whose size is still changing.

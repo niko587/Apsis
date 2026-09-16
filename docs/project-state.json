@@ -29,7 +29,7 @@
   "checks": {
     "typescript": "clean (app + node + e2e projects)",
     "tests": "320/320 passing (19 files) — includes 91 server tests, all against a fake provider so CI needs no key",
-    "e2e": "48/48 passing — 11 llm-command + 4 host-boundary (bundle secret scan, inert config, activation path) + 8 reachability + 3 hover-stability (D25) + 3 persistence + 10 progressive-reveal + 9 spatial-focus. One intermittent: reachability@1600x1000 wheel-stall, 1 failure in 5 observations, pre-existing and unrelated to the server milestone — see NEXT_ACTIONS 1c.",
+    "e2e": "48/48 passing — 11 llm-command + 4 host-boundary (bundle secret scan, inert config, activation path) + 8 reachability + 3 hover-stability (D25) + 3 persistence + 10 progressive-reveal + 9 spatial-focus. No known intermittents: the reachability wheel-stall flake is CLOSED (D35) — the helper now waits for the rail's scroll extent to settle instead of counting stalls, D12 detection got stricter (first tick, not third), and the previously flaky viewport ran 12 consecutive times clean.",
     "lint": "exit 0 (R3F idiom warnings in LeadField.tsx only)",
     "build": "green (~1.27MB, 350KB gz)",
     "runtime_console_errors": 0,
@@ -70,7 +70,7 @@
     { "key": "transport", "spec": "§19", "status": "seam PROVEN — two concrete sources behind one LeadSource contract (simulator + replay); still no real backend", "files": ["src/state/source.ts", "src/state/sources.ts", "src/state/replay.ts", "src/state/fixtures/demoSession.ts"] },
     { "key": "persistence", "spec": "-", "status": "real (v1) — canonical event log in IndexedDB, replayed through ingest on boot; corruption fails loudly; two-step reset; replay mode isolated (D23). Status reports `persisted` (on disk) alongside `events` (in memory): writes are throttled at 1.5s and pagehide cannot await a flush, so up to one write window can be lost on an abrupt close — recorded honestly, not fixed", "files": ["src/state/persistence.ts", "src/state/boot.ts", "e2e/persistence.spec.ts"] },
     { "key": "nationwide-book", "spec": "-", "status": "real (90 metros, 50 states + DC, population-weighted)", "files": ["src/domain/geography.ts", "src/domain/seed.ts"] },
-    { "key": "reachability-e2e", "spec": "-", "status": "real (D20); proven to catch the D12 regression", "files": ["e2e/reachability.spec.ts", "playwright.config.ts"] },
+    { "key": "reachability-e2e", "spec": "-", "status": "real (D20, D35); proven to catch the D12 regression — re-proven under D35: reverting .rail to overflow:hidden turns 7 of 11 red across all three viewports in 31s, and src/App.css was restored byte-identical", "files": ["e2e/reachability.spec.ts", "playwright.config.ts"] },
     { "key": "ci", "spec": "-", "status": "real", "files": [".github/workflows/ci.yml"] }
   ],
   "invariants": [

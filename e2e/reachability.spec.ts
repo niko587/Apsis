@@ -132,15 +132,85 @@ async function geometryOf(target: Locator): Promise<Geometry> {
   });
 }
 
+interface RailMetrics {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+}
+
 const railScrollTop = (rail: Locator) => rail.evaluate((el) => el.scrollTop);
+
+const railMetrics = (rail: Locator): Promise<RailMetrics> =>
+  rail.evaluate((el) => ({
+    scrollTop: el.scrollTop,
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+  }));
+
+/** Is there anywhere left to travel in this direction? */
+const atTravelEnd = (m: RailMetrics, direction: number) =>
+  direction > 0 ? m.scrollTop + m.clientHeight >= m.scrollHeight - 1 : m.scrollTop <= 0;
+
+const SETTLE_SAMPLE_MS = 50;
+const SETTLE_STABLE_SAMPLES = 3;
+const SETTLE_MAX_SAMPLES = 12;
+/** A rail still growing after this many settle windows will not settle in this test. */
+const MAX_SETTLES = 5;
+
+/**
+ * Wait until the rail's scrollable EXTENT stops changing.
+ *
+ * Not a sleep — a predicate with a bound. It samples `scrollHeight` and returns
+ * as soon as three consecutive samples agree, so the common case costs ~150ms
+ * and a document that keeps growing costs at most ~600ms before the caller is
+ * told it has not settled.
+ */
+async function scrollExtentSettled(page: Page, rail: Locator): Promise<boolean> {
+  let last = (await railMetrics(rail)).scrollHeight;
+  let stable = 0;
+  for (let i = 0; i < SETTLE_MAX_SAMPLES; i++) {
+    await page.waitForTimeout(SETTLE_SAMPLE_MS);
+    const current = (await railMetrics(rail)).scrollHeight;
+    if (current === last) {
+      if (++stable >= SETTLE_STABLE_SAMPLES) return true;
+    } else {
+      stable = 0;
+      last = current;
+    }
+  }
+  return false;
+}
 
 /**
  * Scroll `target` into view the way a user would: point at the rail, turn the
  * wheel. Returns the geometry reached, plus how many wheel ticks it took.
  *
- * Gives up early when a tick moves `scrollTop` by nothing — that is either the
- * end of the scroll range or a container that cannot scroll at all, and both
- * mean more wheeling is pointless.
+ * WHY THIS NO LONGER COUNTS STALLS.
+ *
+ * It used to treat three consecutive no-movement ticks as "cannot scroll
+ * farther". That conflates two different states, and the rail is a LIVING
+ * document — the activity feed gains rows, appointments land — so the wrong one
+ * kept happening: the rail sat at its current maximum when a tick fired, the
+ * helper banked a stall, the feed then added a row, `scrollHeight` grew, and by
+ * the time the target was reachable the helper had already given up. One
+ * observed failure had the last panel at `top=1028` in a 1000px viewport with
+ * `afterWheelTicks=3`. Raising the count would only have made the race rarer.
+ *
+ * The fix is to ask the question the stall count was a proxy for. When a tick
+ * moves nothing there are exactly two possibilities, and they are
+ * distinguishable:
+ *
+ *   - NOT at the end of travel ⇒ there is room to scroll and the wheel did not
+ *     move it. That is the D12 regression (`overflow: hidden`), and it is now
+ *     caught on the FIRST tick rather than the third — stricter than before.
+ *
+ *   - AT the end of travel ⇒ we are at the bottom, and the only question left
+ *     is whether this bottom is final. So wait for the scroll extent to settle.
+ *     If it grew, there is more to reach and we keep wheeling. If it held still,
+ *     the bottom is real and the target is genuinely unreachable.
+ *
+ * No assertion is weakened: the caller still requires the click point to be on
+ * screen, the hit test to resolve to the target, and a real click to land.
  */
 async function wheelIntoView(
   page: Page,
@@ -155,28 +225,37 @@ async function wheelIntoView(
   );
 
   let geometry = await geometryOf(target);
-  // Consecutive ticks in which the wheel moved nothing. Bailing on the FIRST
-  // stalled tick was a race: with the live feed running, the rail can be at a
-  // momentary bottom when the wheel fires, then grow (an appointment lands,
-  // LeadDetail fills on hover) — leaving the target a few px below a fold that
-  // scrolling could now reach. Three stalls distinguishes "genuinely cannot
-  // scroll" from "briefly at the bottom of a living document"; the D12
-  // regression (overflow: hidden) never moves scrollTop at all, so it still
-  // fails immediately at 3 ticks with reachable=false.
-  let stalls = 0;
+  let settles = 0;
+
   for (let ticks = 1; ticks <= 40; ticks++) {
     if (geometry.reachable) return { geometry, ticks: ticks - 1 };
 
-    const before = await railScrollTop(rail);
     // Direction is derived from where the target actually is, so this works
     // walking back up the rail as well as down it.
-    await page.mouse.wheel(0, geometry.top < railBox!.y ? -260 : 260);
+    const direction = geometry.top < railBox!.y ? -1 : 1;
+    const before = await railMetrics(rail);
+    await page.mouse.wheel(0, direction * 260);
     await page.waitForTimeout(50);
-    const after = await railScrollTop(rail);
-
+    const after = await railMetrics(rail);
     geometry = await geometryOf(target);
-    stalls = before === after ? stalls + 1 : 0;
-    if (stalls >= 3) return { geometry, ticks };
+
+    if (after.scrollTop !== before.scrollTop) continue; // moved — keep going
+
+    if (!atTravelEnd(after, direction)) {
+      // Room to scroll, and the wheel could not use it. Nothing will change.
+      return { geometry, ticks };
+    }
+
+    if (settles++ >= MAX_SETTLES) return { geometry, ticks };
+
+    const settled = await scrollExtentSettled(page, rail);
+    geometry = await geometryOf(target);
+    if (geometry.reachable) return { geometry, ticks };
+    // Settled AND still nowhere to go: this bottom is the real bottom.
+    if (settled && atTravelEnd(await railMetrics(rail), direction)) {
+      return { geometry, ticks };
+    }
+    // Otherwise the rail grew under us — loop and wheel into the new room.
   }
   return { geometry, ticks: 40 };
 }

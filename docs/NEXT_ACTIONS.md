@@ -1,12 +1,12 @@
 # Next Actions
 
-_Last updated: 2026-09-16 (host interpreter endpoint contract). Ordered. Each
-item: what, why now, acceptance, suggested model (spec §2)._
+_Last updated: 2026-09-16 (reachability flake closed). Ordered. Each item:
+what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
 - GitHub bootstrap. Remote exists, `main` canonical, `/docs` browsable (D19).
 - **Browser reachability suite** — `e2e/reachability.spec.ts`, proven to catch
-  D12 by reverting the rail (D20). See the open defect below.
+  D12 by reverting the rail (D20, re-proven under D35).
 - **CI** — `.github/workflows/ci.yml`, five gates on push/PR, badge in README.
 - **Performance investigation, rounds 1–7 — RESOLVED and accepted.** Full
   history, refuted hypotheses and diagnostic evidence preserved in
@@ -32,9 +32,13 @@ by design: it does nothing until a host declares an endpoint, and Apsis
 deliberately cannot supply one, because supplying one would mean holding the
 key.
 
-The current milestone is therefore **the host interpreter endpoint** — Apsis's
-first server-side code — contract at
-`docs/CONTRACT_HOST_INTERPRETER_ENDPOINT.md`, **not yet implemented**.
+The **host interpreter endpoint** is implemented and deployment-hardened
+(`server/`, `api/`, contract `docs/CONTRACT_HOST_INTERPRETER_ENDPOINT.md`,
+D29–D34), and the one recorded browser flake is closed (D35). No live-provider
+call has been made yet — see §1a.
+
+The current milestone is **authentication for `/api/interpret`** (§1b). Nothing
+else is open: there are no known failing tests and no recorded intermittents.
 
 ## 0. (closed) Reachability suite over-strictness — FIXED, CI trust restored
 The assertion required an element's whole bounding box inside the viewport,
@@ -175,30 +179,32 @@ at the boundary, a public URL is a metered resource left unlocked. Scope: who
 may call `/api/interpret`, how the browser proves it, and what the limiter keys
 on once it has something better than an IP.
 
-## 1c. (open, pre-existing) Reachability wheel-stall flake
-`e2e/reachability.spec.ts:198 @1600x1000` failed **once** during this milestone.
-Measured afterwards: green on the next full suite (48/48) and **44/44 across a
-4× repeat of the whole reachability spec** — so roughly one failure in five
-observations, not a standing red. **Not caused by this work** — nothing in
-`src/`, the CSS or the rail changed; `index.html` gained one classic
-`<script>` tag, which cannot move layout.
-The mechanism is the documented tolerance in `wheelIntoView`: with the live feed
-on, the rail can sit at max scroll when a wheel tick fires, stall three times,
-and be abandoned just as the Live Activity panel grows another row — leaving the
-last panel a few px below a fold that scrolling could now reach
-(`top=1028 bottom=1040` in a 1000px viewport, `afterWheelTicks=3`). A stall
-count cannot tell "cannot scroll" from "briefly at the bottom of a document that
-is still growing".
-Fixing it means making the helper wait on the rail's `scrollHeight` settling
-rather than counting stalls. Out of this milestone's file boundaries; recorded
-rather than quietly patched.
+## 1c. (closed) Reachability wheel-stall flake — FIXED (D35)
+`e2e/reachability.spec.ts @1600x1000` failed once, then passed on repeats — the
+shape of a race, not a standing red.
 
-**One deviation from the contract, flagged rather than buried:** the response
-envelope gained an optional `actionSpan`. §G specified provenance for filters
-and left `action` uncited, which would have forced a choice between reporting
-"call" as ignored while agents were being dispatched, or exempting the verb from
-the residue and trusting it silently. Requiring a citation makes one rule cover
-everything — no provenance, no effect (D28).
+**Root cause, in the test rather than the product:** `wheelIntoView` treated
+three consecutive no-movement wheel ticks as "cannot scroll farther". The rail
+is a living document (the activity feed gains rows, appointments land), so the
+helper could bank stalls while sitting at a momentary bottom, give up, and then
+have the rail grow underneath it — leaving the last panel a few px below a fold
+that scrolling could by then have reached (`top=1028` in a 1000px viewport,
+`afterWheelTicks=3`).
+
+**Fix:** stop counting stalls and ask what the count was a proxy for. A tick
+that moves nothing means either (a) there is room to scroll and the wheel could
+not use it — the D12 regression, now caught on the FIRST tick rather than the
+third, so the check got *stricter* — or (b) we are at the end of travel, in
+which case the only question is whether that bottom is final, answered by
+waiting for `scrollHeight` to settle. Grew ⇒ keep wheeling. Held still ⇒
+genuinely unreachable. The settle is a bounded predicate (three agreeing 50ms
+samples, ~600ms ceiling, five per call), not a sleep.
+
+**Proven both ways:** reverting `.rail` to `overflow: hidden` turns 7 of 11 red
+across all three viewports in 31s; `src/App.css` restored byte-identical. The
+previously flaky viewport then ran **12 consecutive times clean** (36/36), and
+the full browser suite is green. No assertion was weakened and no product code
+changed.
 
 ## 2. (closed) The four red browser specs — triaged, and one was a real bug
 Found at b96108d, fixed at the checkpoint below. They were **not** all stale, and
