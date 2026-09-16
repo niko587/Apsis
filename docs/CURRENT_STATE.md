@@ -1,7 +1,7 @@
 # Current State
 
-_Last updated: 2026-09-15 (GitHub bootstrap; previous phase: shader fix +
-nationwide book)_
+_Last updated: 2026-09-16 (host interpreter endpoint contract; previous phase:
+opt-in LLM command parsing)_
 
 This file is the snapshot an external AI project manager should trust over any
 conversation history. It describes the repository as it actually is.
@@ -329,7 +329,33 @@ rendering.
 plausible stage-aware `LeadEvent`s at ~9/s. It is the single seam where a real
 CRM/dialer/webhook transport plugs in; nothing downstream knows the difference.
 
-**Absent**: any backend, any persistence (reload = reseed), LLM command
-parsing (grammar by deliberate staging choice), programmatic multi-model
-invocation (environment provides none; orchestrator correctly reports
-ASSISTED).
+**Real since this paragraph was last written**: persistence (a canonical event
+log in IndexedDB, replayed through `ingest` on boot — reload no longer reseeds,
+D23) and **opt-in LLM command parsing** (`src/command/`, D27/D28).
+
+**Absent**: any backend. The LLM interpreter is implemented but **inert** — it
+does nothing until a host declares `window.__APSIS_COMMAND_INTERPRETER__`, and
+Apsis deliberately cannot supply one, because supplying one would mean shipping
+a credential to the browser. Building that endpoint is the current milestone
+(`docs/CONTRACT_HOST_INTERPRETER_ENDPOINT.md`). Also absent: programmatic
+multi-model invocation (the environment provides no mechanism; the orchestrator
+correctly reports ASSISTED) and any authentication.
+
+## Current milestone: the host interpreter endpoint (2026-09-16, contract only)
+
+Apsis's first server-side code. `POST /api/interpret`, same origin, Node 22, a
+plain `Request → Response` handler in `server/` with a three-line platform
+adapter in `api/`. Anthropic via `fetch` with forced tool use — no SDK and no
+new dependency, so D27's "no LLM SDK in package.json" stands unamended. Default
+model `claude-haiku-4-5-20251001`, switchable by one environment variable.
+
+The design is shaped by the client being finished and indifferent: the endpoint
+is **not a trusted component**. Forced tool use narrows the model's output, but
+the browser validator still governs what reaches `LeadQuery`, and if the
+endpoint vanishes the product keeps working. `e2e/llm-command.spec.ts` must pass
+unmodified — that is the proof.
+
+Stated plainly rather than buried: the endpoint will be **unauthenticated** and
+backed by a metered vendor key, so anyone who can reach it can spend it. Rate
+limiting, size caps, same-origin checks and a vendor spend cap are cost control,
+not access control. Authentication is the milestone after it.

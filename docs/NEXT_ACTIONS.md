@@ -1,7 +1,7 @@
 # Next Actions
 
-_Last updated: 2026-09-16 (LLM command parsing contract). Ordered. Each item:
-what, why now, acceptance, suggested model (spec §2)._
+_Last updated: 2026-09-16 (host interpreter endpoint contract). Ordered. Each
+item: what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
 - GitHub bootstrap. Remote exists, `main` canonical, `/docs` browsable (D19).
@@ -24,10 +24,17 @@ bloom) is the accepted shipping baseline — see `PERFORMANCE_BASELINE.md`
 closeout. Performance is **no longer the top blocker**, and no further rendering
 optimisation is warranted or wanted.
 
-Arc A, Persistence v1, §15 drill dimensions, §14 spatial individual focus and
-progressive lead reveal are all closed — the last two **owner accepted**. The
-current milestone is **LLM command parsing (opt-in)**, contract at
-`docs/CONTRACT_LLM_COMMAND_PARSING.md`, not yet implemented.
+Arc A, Persistence v1, §15 drill dimensions, §14 spatial individual focus,
+progressive lead reveal and **opt-in LLM command parsing** are all closed — §14
+and progressive reveal owner accepted. LLM command parsing is **implemented**
+(`src/command/`, contract `docs/CONTRACT_LLM_COMMAND_PARSING.md`) and is inert
+by design: it does nothing until a host declares an endpoint, and Apsis
+deliberately cannot supply one, because supplying one would mean holding the
+key.
+
+The current milestone is therefore **the host interpreter endpoint** — Apsis's
+first server-side code — contract at
+`docs/CONTRACT_HOST_INTERPRETER_ENDPOINT.md`, **not yet implemented**.
 
 ## 0. (closed) Reachability suite over-strictness — FIXED, CI trust restored
 The assertion required an element's whole bounding box inside the viewport,
@@ -104,8 +111,44 @@ rendered.
 `{ text, schema }` and nothing else.
 
 **Still to do:** owner verification on the real machine, and a host endpoint —
-Apsis deliberately cannot supply one. Until a host declares it, the grammar runs
-and this code is inert.
+see §1a, which is now the current milestone.
+
+## 1a. Host interpreter endpoint — **CURRENT MILESTONE**
+**MODEL: OPUS.** Contract written and committed:
+**`docs/CONTRACT_HOST_INTERPRETER_ENDPOINT.md`** — runtime choice, directory
+layout, endpoint contract, provider interface, model recommendation, secret
+handling, structured output, validation in both directions, privacy and logging,
+rate limiting, timeout ladder, local development, deployment, file boundaries,
+15 tests, acceptance criteria, sequence, and the implementation prompt in §S.
+
+**What:** Apsis's first server-side code — `POST /api/interpret`, same origin,
+Node 22, a plain `Request → Response` handler with a three-line platform
+adapter. Anthropic via `fetch` with forced tool use; **no SDK, no new
+dependency**, so D27 stands unamended. Default model
+`claude-haiku-4-5-20251001`; `APSIS_MODEL` switches it.
+
+**The three decisions that shape it:**
+1. **Same origin.** Removes CORS, preflight, a second hostname and any browser
+   credential, and makes the client's existing `endpoint: '/api/interpret'` work
+   verbatim.
+2. **The client's `schema` is ignored.** The server builds its prompt from its
+   own pinned copy of `COMMAND_SCHEMA`, imported from the client module so the
+   two cannot drift. A client-supplied vocabulary must never reach the model —
+   that is the schema-injection answer.
+3. **The endpoint is not trusted.** Forced tool use narrows the output; the
+   browser validator still governs what reaches `LeadQuery`. The blast radius of
+   a bad or injected model answer is set by the validator, not the prompt.
+
+**Acceptance headline:** `src/**` unchanged, the full suite green **without a
+key**, and the default build still making zero network requests —
+`e2e/llm-command.spec.ts` must pass unmodified, which is what proves the client
+does not care whether this endpoint exists.
+
+**Stated plainly, not buried:** the endpoint is unauthenticated and backed by a
+metered vendor key, so anyone who can reach it can spend it. Rate limiting,
+size caps, same-origin checks and a vendor spend cap are cost control, not
+access control. **Authentication is the next milestone** and the README must say
+so before any public URL exists.
 
 **One deviation from the contract, flagged rather than buried:** the response
 envelope gained an optional `actionSpan`. §G specified provenance for filters

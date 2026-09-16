@@ -100,6 +100,13 @@
     "an LLM may never be trusted to report what it failed to understand: every mapped filter must cite a span present verbatim in the input, and unrecognised text is computed by subtracting verified spans — the same way parseCommand earns it (CONTRACT_LLM_COMMAND_PARSING §H)"
   ],
   "blocked": [],
+  "current_milestone": {
+    "name": "host interpreter endpoint (first server boundary)",
+    "contract": "docs/CONTRACT_HOST_INTERPRETER_ENDPOINT.md",
+    "status": "contract written and binding, NOT implemented",
+    "shape": "POST /api/interpret, same origin, Node 22, plain Request->Response handler in server/ with a 3-line platform adapter in api/; Anthropic via fetch with forced tool use; no SDK and no new dependency so D27 stands; default model claude-haiku-4-5-20251001 via APSIS_MODEL",
+    "honest_gap": "the endpoint is unauthenticated and backed by a metered vendor key: rate limiting, size caps, same-origin checks and a vendor spend cap are cost control, not access control. Authentication is the NEXT milestone and must be stated in the README before any public URL exists"
+  },
   "performance": {
     "baseline": "docs/PERFORMANCE_BASELINE.md (2026-09-15)",
     "owner_report": "subjective grade D on 2020 M1 MacBook Air",
