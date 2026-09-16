@@ -17,7 +17,7 @@ import {
   type CommandAction,
   type FunnelStep,
 } from '../domain/query';
-import { createCommandRunner } from '../command/router';
+import { createCommandRunner, type AuthSignal } from '../command/router';
 import { readInterpreterConfig } from '../command/interpreter';
 import type { LeadEventKind } from '../domain/types';
 import { useApsis } from '../state/store';
@@ -54,16 +54,14 @@ interface Outcome {
 }
 
 /**
- * What the browser is allowed to know about its own session.
+ * The four states the session UI can be in.
  *
- * Deliberately tiny: an opaque id and capabilities. No email, no token, nothing
- * from the provider — the server decides this shape (`publicSessionOf`) and the
- * UI only needs to know whether to offer a sign-in link.
+ * `unknown` and `unavailable` are both "we cannot say", and both render
+ * something other than a sign-in link — because claiming a user is signed OUT
+ * when the sign-in service merely timed out is a lie that throws away a
+ * perfectly good session and invites them to re-authenticate for nothing.
  */
-interface SessionView {
-  authenticated: boolean;
-  userId?: string;
-}
+type SessionState = 'unknown' | 'signed-in' | 'signed-out' | 'unavailable';
 
 /**
  * v1 gates the INTERPRETER, not the application.
@@ -76,27 +74,54 @@ interface SessionView {
  * Apsis" promise. That changes the day real customer data is served from the
  * server, and not before.
  */
-function useSession(): { session: SessionView | null; gated: boolean } {
+function useSession(): {
+  state: SessionState;
+  gated: boolean;
+  applySignal: (signal: AuthSignal) => void;
+} {
   const gated = useMemo(() => readInterpreterConfig() !== null, []);
-  const [session, setSession] = useState<SessionView | null>(null);
+  const [state, setState] = useState<SessionState>('unknown');
 
   useEffect(() => {
     if (!gated) return;
     let live = true;
     void fetch('/api/session', { credentials: 'same-origin' })
-      .then((r) => (r.ok ? (r.json() as Promise<SessionView>) : { authenticated: false }))
-      // A session endpoint that cannot be reached is not an error state: the
-      // grammar still works, so the worst case is showing a sign-in link.
-      .catch(() => ({ authenticated: false }))
-      .then((value) => {
-        if (live) setSession(value);
+      .then(async (r) => {
+        // 503 is the server saying "I could not check", which is NOT a logout.
+        if (r.status === 503) return 'unavailable' as const;
+        if (!r.ok) return 'unavailable' as const;
+        const body = (await r.json()) as { authenticated?: boolean };
+        return body.authenticated ? ('signed-in' as const) : ('signed-out' as const);
+      })
+      // A session endpoint that cannot be reached is also "cannot say". The
+      // grammar still works either way, so there is nothing to gain by
+      // guessing, and a wrong guess of "signed out" is the harmful one.
+      .catch(() => 'unavailable' as const)
+      .then((next) => {
+        if (live) setState(next);
       });
     return () => {
       live = false;
     };
   }, [gated]);
 
-  return { session, gated };
+  /**
+   * Fold what a command's outcome revealed into the session state.
+   *
+   * `forbidden` deliberately changes NOTHING: a 403 means the session is valid
+   * and this account lacks the capability, so replacing sign-out with sign-in
+   * would be both wrong and useless. `unavailable` preserves a known signed-in
+   * state for the same reason — a provider blip is not a logout.
+   */
+  const applySignal = useCallback((signal: AuthSignal) => {
+    setState((current) => {
+      if (signal === 'signed-out') return 'signed-out';
+      if (signal === 'forbidden') return current === 'unknown' ? 'signed-in' : current;
+      return current === 'signed-in' ? 'signed-in' : 'unavailable';
+    });
+  }, []);
+
+  return { state, gated, applySignal };
 }
 
 export function CommandBar() {
@@ -109,7 +134,7 @@ export function CommandBar() {
   const setFocus = useApsis((s) => s.setFocus);
 
   const placeholder = useMemo(() => EXAMPLES[0], []);
-  const { session, gated } = useSession();
+  const { state: sessionState, gated, applySignal } = useSession();
 
   /**
    * Owns the abort controller and the generation counter (§J). One per mounted
@@ -141,6 +166,8 @@ export function CommandBar() {
       if (resolved === null) return;
 
       const { parsed, note: interpreterNote } = resolved;
+      // What the endpoint revealed about the session, if anything.
+      if (resolved.authSignal) applySignal(resolved.authSignal);
       const { query, action, understood, unrecognised } = parsed;
 
       if (isEmptyQuery(query)) {
@@ -195,7 +222,7 @@ export function CommandBar() {
       });
       setRunning(false);
     },
-    [requestWork, setMatched, setFocus, runner],
+    [requestWork, setMatched, setFocus, runner, applySignal],
   );
 
   const clear = () => {
@@ -237,21 +264,40 @@ export function CommandBar() {
       {/* Restrained on purpose: the command bar works signed out, so this is an
           offer rather than a wall. Rendered only when a host has configured an
           interpreter — otherwise there is nothing to sign in FOR. */}
-      {gated && session !== null && (
-        <p className="command-auth muted">
-          {session.authenticated ? (
+      {/* A div, not a p: the sign-out control is a <form>, which is flow content
+          and is not permitted inside a paragraph — the browser would silently
+          close the <p> early and the layout would come apart. */}
+      {gated && sessionState !== 'unknown' && (
+        <div className="command-auth muted">
+          {sessionState === 'signed-in' && (
             <>
               AI interpretation enabled ·{' '}
-              <a href="/api/auth/logout" data-auth-signout>
-                sign out
-              </a>
+              {/* A FORM, not a link: logout mutates, so it is a same-origin
+                  POST. A GET that clears a session can be fired by any
+                  `<img src>` on any page, and SameSite=Lax would happily
+                  attach the cookie to it. The button is a real submit, so it
+                  stays keyboard-reachable. */}
+              <form method="post" action="/api/auth/logout" className="command-auth-form">
+                <button type="submit" className="linklike" data-auth-signout>
+                  sign out
+                </button>
+              </form>
             </>
-          ) : (
-            <a href={`/api/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`} data-auth-signin>
+          )}
+          {sessionState === 'signed-out' && (
+            <a
+              href={`/api/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`}
+              data-auth-signin
+            >
               Sign in to use AI interpretation
             </a>
           )}
-        </p>
+          {sessionState === 'unavailable' && (
+            // Not "signed out" — we genuinely do not know, and saying so is
+            // better than inviting a pointless re-authentication.
+            <span data-auth-unavailable>Sign-in is temporarily unavailable.</span>
+          )}
+        </div>
       )}
 
       {outcome && (

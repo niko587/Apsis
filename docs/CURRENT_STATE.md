@@ -11,8 +11,8 @@ conversation history. It describes the repository as it actually is.
 | Check | Status | Command |
 |---|---|---|
 | TypeScript | clean (4 projects: app, node, e2e, server) | `npm run typecheck` |
-| Unit tests | **402 / 402 passing** (22 files) | `npm test` |
-| Browser suite | **58 / 58 passing** | `npm run test:e2e` |
+| Unit tests | **421 / 421 passing** (23 files) | `npm test` |
+| Browser suite | **65 / 65 passing** | `npm run test:e2e` |
 | Lint | exit 0 (warnings only, see below) | `npm run lint` |
 | Production build | green, ~1.27 MB bundle (350 KB gz) | `npm run build` |
 | Runtime console | 0 errors at load and through drill/command flows | — |
@@ -458,6 +458,33 @@ Three properties are structural rather than conventional:
 - **Every response leaves through one function**, so a rotated `sealedSession`
   cannot be dropped on an error path — that would lose the refresh token and
   cause a silent logout an hour later.
+
+**Correctness closeout (D42-D45)** fixed six defects found in review, five of
+which would have surfaced only under a provider incident or a cross-site attack:
+
+1. **Logout mutated on GET.** The affordance was a link and the provider did not
+   check the method, so any `<img src>` could sign a user out — and
+   `SameSite=Lax` deliberately attaches cookies to cross-site top-level GETs. It
+   is now POST-only (405 + `Allow` otherwise), enforces the interpreter's own
+   `sameOrigin()`, and the control is a real form button that stays
+   keyboard-operable.
+2. **`/api/session` discarded a rotated session**, consuming a refresh at WorkOS
+   while leaving the browser holding a superseded token — a silent sign-out
+   minutes later, somewhere else.
+3. **`/api/session` reported `transient` as `authenticated: false`**, which
+   would have shown a sign-in link to everyone during an outage. Now 503,
+   `Retry-After`, cookie kept.
+4. **Any throw from `authenticate()` meant "expired".** The SDK types everything
+   it can classify, so a throw is verification that could not be *completed* —
+   a JWKS fetch failing, say. Now transient.
+5. **401 and 403 shared one message.** A 403 user IS signed in; telling them to
+   sign in loops without fixing anything. Three statuses now have three
+   destinations, asserted as real UI transitions rather than isolated states.
+6. **The challenge cookie was documented as sealed and is not.** Threat-modelled
+   and the contract amended to the implementation (D45), because sealing defends
+   only against an attacker who can read an HttpOnly/Secure/`__Host-` cookie —
+   and D39 cuts both ways: do not hand-roll session crypto, and do not add
+   crypto that defends against nothing.
 
 **Neither live verification has been run.** No WorkOS credentials and no
 Anthropic key exist in this environment, so the real sign-in flow and the real

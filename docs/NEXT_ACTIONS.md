@@ -246,13 +246,22 @@ because `authenticate()` validates locally and WorkOS is only consulted at
 durable quotas. Those two are precisely the things that will justify a database
 — and nothing else in this milestone does.
 
+**Correctness closeout (D42–D45).** Review found six defects, five of which
+would only have shown up under a provider incident or a cross-site attack:
+logout mutated on GET; `/api/session` discarded a rotated sealed session;
+`/api/session` reported a transient failure as signed-out; any throw from
+`authenticate()` meant expired; 401 and 403 shared one message; and the
+challenge cookie was documented as sealed when it is not — now threat-modelled
+and the contract amended rather than left mismatched. All closed, each with a
+test that fails if it returns.
+
 **Delivered.** `server/auth/{identity,capabilities,cookies,provider}.ts` plus
-four test files, `api/auth/{login,callback,logout}.ts`, `api/session.ts`,
+five test files, `api/auth/{login,callback,logout}.ts`, `api/session.ts`,
 `scripts/devIdentity.mjs`, the §J pipeline order in `server/interpret.ts`, a
 401/503-aware note in `src/command/{interpreter,router}.ts`, and a restrained
 sign-in affordance in `CommandBar`. One dependency: `@workos-inc/node@10.13.0`,
-imported by exactly one file, enforced by an import scan. Unit 402 (was 320),
-browser 58 (was 48). D41 records what is structural.
+imported by exactly one file, enforced by an import scan. Unit 421 (was 320),
+browser 65 (was 48). D41 records what is structural; D42–D45 the closeout.
 
 **The trigger, still explicit:** v1 gates the interpreter, not the application.
 The moment real customer data is served from the server, the app-wide gate

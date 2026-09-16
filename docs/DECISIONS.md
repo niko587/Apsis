@@ -596,3 +596,67 @@ stays exactly as strict.
 Forbids: defaulting authentication to permissive when unconfigured; importing
 the dev identity from `server/` or `api/`; returning a response that bypasses
 `withCookie`.
+
+## D42 — Logout is a POST; a state-changing GET is a CSRF hole
+(2026-09-16) Review found the sign-out affordance rendered as
+`<a href="/api/auth/logout">` and the provider not checking the method. A GET
+that clears a session and calls the provider can be fired by any `<img src>` on
+any page — and `SameSite=Lax` DELIBERATELY attaches cookies to cross-site
+top-level GETs, so the one CSRF layer people assume covers this does not.
+Now: a wrong method changes nothing and returns 405 with `Allow: POST`; the POST
+path enforces the same origin policy the interpreter uses, through the same
+`sameOrigin()` function rather than a second copy that could drift; and the
+browser control is a real `<form method="post">` with a submit button, so it
+stays keyboard-operable and reachable by assistive technology while no longer
+being a link. Cookies are cleared and the provider is called on the valid flow
+only, asserted for every rejected method and every cross-site header shape.
+Forbids: any endpoint that mutates on GET; a second implementation of the
+same-origin check.
+
+## D43 — A rotated session must be persisted on EVERY route that can rotate it
+(2026-09-16) `/api/interpret` wrote back a rotated `sealedSession`;
+`/api/session` did not. Since `authenticate()` may refresh and rotate on the way
+through, the status route could consume a rotation at WorkOS and then discard
+the new cookie — leaving the browser holding a superseded token. The user is
+signed out minutes later, somewhere else, for no reason they could observe. The
+worst kind of bug: correct-looking, silent, and separated in time from its cause.
+The fix is not "remember to do this" — it is that `sessionResponse` carries
+`setCookie` the same way the endpoint's single `withCookie()` exit does, with a
+test that fails specifically if it is dropped.
+Forbids: any route that calls `authenticate()` and discards `setCookie`.
+
+## D44 — "We could not check" is not "you are signed out"
+(2026-09-16) Three places collapsed a transient condition into a logout, and
+each would have turned a WorkOS blip into a mass sign-out:
+`sessionResponse` mapped every non-authenticated result to
+`{ authenticated: false }`, including `transient` — now 503 with `Retry-After`,
+cookie kept, and it never says `authenticated: false`.
+`authenticate()` treated ANY throw as `expired` — but the SDK reports everything
+it can classify as a typed `authenticated: false`, so a throw is verification
+that could not be COMPLETED (a JWKS fetch failing, say). It is now `transient`.
+No error parsing: guessing at SDK internals would be a second, worse classifier.
+The client mapped 401 and 403 to the same "sign in" note — semantically wrong,
+because a 403 user IS signed in and sending them to a sign-in page loops without
+fixing anything. Now 401 → signed out, 403 → "not available for this account"
+with the signed-in UI preserved, 503 → keeps the last known state. On first load
+a 503 or an unreachable status endpoint renders a restrained "temporarily
+unavailable", never a sign-in invitation.
+Forbids: mapping a transient or unknown failure to signed-out anywhere; telling
+a 403 user to sign in.
+
+## D45 — The login challenge is not sealed, on purpose
+(2026-09-16) The contract said the PKCE `state` + `codeVerifier` challenge was
+sealed; the implementation stores URL-encoded JSON in an HttpOnly, Secure,
+`__Host-`, `SameSite=Lax` cookie that lives ten minutes. The contract is amended
+to the implementation rather than the reverse, and the reasoning is the point.
+Sealing defends only against an attacker who can READ the cookie — and HttpOnly
+excludes script, while Secure and `__Host-` exclude the network, other origins
+and subdomains. What remains is device-level compromise, where the far more
+valuable session cookie is equally exposed. The contents are not sensitive:
+`state` exists to be compared for equality, and the verifier is a one-time
+secret bound to a single short-lived `code`. Forging one is excluded by
+`__Host-`, and would still have to match the provider's echoed `state`.
+D39 cuts both ways: do not hand-roll session crypto, and do not add crypto that
+defends against nothing. **This expires** if the challenge ever carries
+identifying data — an email, a tenant hint, a user-bearing return payload — at
+which point it must be sealed.

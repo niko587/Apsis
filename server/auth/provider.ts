@@ -23,6 +23,7 @@
 
 import { WorkOS } from '@workos-inc/node';
 import { capabilitiesFor } from './capabilities';
+import { sameOrigin } from '../guard';
 import type { AuthResult, Identity } from './identity';
 import {
   CHALLENGE_MAX_AGE_SECONDS,
@@ -43,6 +44,11 @@ export interface AuthProviderConfig {
   cookiePassword: string;
   /** Absolute URL of `/api/auth/callback`, registered with WorkOS. */
   redirectUri: string;
+  /**
+   * Origin allowed to POST to logout. Shares the interpreter's policy via
+   * `sameOrigin`, so the two cannot drift apart.
+   */
+  allowedOrigin?: string;
 }
 
 /**
@@ -192,17 +198,32 @@ export function createWorkOSAuthProvider(
           cookiePassword: config.cookiePassword,
         });
       } catch {
-        // A cookie that cannot even be loaded is not a session.
-        return { status: 'expired' };
+        // Construction failing is an operational problem (a misconfigured
+        // cookie password, say), not evidence about this user's session.
+        return { status: 'transient' };
       }
 
       let result: WorkOSAuthenticateResult;
       try {
         result = await session.authenticate();
       } catch {
-        // `authenticate()` validates locally; a throw here is a malformed
-        // cookie rather than a provider outage.
-        return { status: 'expired' };
+        /**
+         * AN UNKNOWN THROW IS NOT EVIDENCE OF AN EXPIRED SESSION.
+         *
+         * The SDK reports every condition it can actually classify as a TYPED
+         * `{ authenticated: false, reason }` — `invalid_jwt`,
+         * `invalid_session_cookie`, `no_session_cookie_provided` — which flow
+         * through the refresh path below. A throw is what is left over:
+         * verification that could not be COMPLETED, such as a JWKS fetch
+         * failing. Treating that as "expired" converts a WorkOS or network
+         * incident into a forced logout for everyone, which is the exact
+         * failure D40 exists to prevent — the reason simply arrives as an
+         * exception rather than a flag.
+         *
+         * No error parsing here: guessing at the SDK's internals would be a
+         * second, worse classifier that drifts from the real one.
+         */
+        return { status: 'transient' };
       }
 
       if (result.authenticated) {
@@ -328,6 +349,37 @@ export function createWorkOSAuthProvider(
     },
 
     async logout(request: Request): Promise<Response> {
+      /**
+       * LOGOUT IS A MUTATION, SO IT IS A POST.
+       *
+       * A `GET` that clears a session and calls the provider is a
+       * state-changing GET: any `<img src>` or link on any page could sign a
+       * user out, and none of the CSRF layers apply to it. `SameSite=Lax`
+       * deliberately attaches cookies to cross-site top-level GETs, which is
+       * precisely what would make that work.
+       *
+       * So a wrong method changes nothing at all — no cookie cleared, no
+       * provider call — and says which method is allowed.
+       */
+      if (request.method !== 'POST') {
+        return new Response(JSON.stringify({ error: 'method_not_allowed' }), {
+          status: 405,
+          headers: {
+            allow: 'POST',
+            'content-type': 'application/json',
+            'cache-control': 'no-store',
+          },
+        });
+      }
+
+      // The same policy the interpreter enforces, from the same function.
+      if (!sameOrigin(request, config.allowedOrigin)) {
+        return new Response(JSON.stringify({ error: 'cross_origin' }), {
+          status: 403,
+          headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+        });
+      }
+
       const secure = isSecureRequest(request);
       const name = sessionCookieName(secure);
       const sessionData = readCookie(request, name);
@@ -369,5 +421,11 @@ export function authProviderFromEnv(
   const redirectUri = env.WORKOS_REDIRECT_URI;
   if (!apiKey || !clientId || !cookiePassword || !redirectUri) return null;
   if (cookiePassword.length < 32) return null;
-  return createWorkOSAuthProvider({ apiKey, clientId, cookiePassword, redirectUri });
+  return createWorkOSAuthProvider({
+    apiKey,
+    clientId,
+    cookiePassword,
+    redirectUri,
+    allowedOrigin: env.APSIS_ALLOWED_ORIGIN,
+  });
 }

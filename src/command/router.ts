@@ -36,12 +36,26 @@ import { parseInterpretation } from './parseInterpretation';
 
 export type CommandSource = 'grammar' | 'interpreter';
 
+/**
+ * What the endpoint's answer implies about the SESSION, as distinct from the
+ * command.
+ *
+ * These are three genuinely different situations and conflating them misleads
+ * the user: `signed-out` means sign in; `forbidden` means you ARE signed in and
+ * this account cannot use the interpreter, so telling them to sign in would
+ * send them round a loop that changes nothing; `unavailable` means we could not
+ * tell, and must not be reported as a logout at all.
+ */
+export type AuthSignal = 'signed-out' | 'forbidden' | 'unavailable';
+
 export interface CommandOutcome {
   /** The canonical result. Downstream code cannot tell which parser produced it. */
   parsed: ParsedCommand;
   source: CommandSource;
   /** One muted line, set only when an interpreter existed and did not answer usefully. */
   note: string | null;
+  /** Set only when the endpoint said something about the session. */
+  authSignal?: AuthSignal;
 }
 
 const PREFIX = 'Interpreted with the built-in grammar — ';
@@ -50,6 +64,11 @@ export const NOTE_TIMEOUT = `${PREFIX}the language model did not answer in time.
 export const NOTE_UNUSABLE = `${PREFIX}the language model returned an answer Apsis could not use.`;
 /** 401. The command still ran; the user simply is not signed in. */
 export const NOTE_SIGN_IN = `${PREFIX}sign in to use the language model.`;
+/**
+ * 403. The user IS signed in — telling them to sign in would send them around a
+ * loop that cannot fix anything. This account simply lacks the capability.
+ */
+export const NOTE_NO_ACCESS = `${PREFIX}AI interpretation is not available for this account.`;
 /**
  * 503. Deliberately NOT phrased as a logout: the session is intact and the
  * sign-in service was momentarily unreachable. Telling the user they are signed
@@ -67,10 +86,15 @@ export interface ResolveOptions {
   interpreter?: CommandInterpreter | null;
 }
 
-const grammarOutcome = (text: string, note: string | null = null): CommandOutcome => ({
+const grammarOutcome = (
+  text: string,
+  note: string | null = null,
+  authSignal?: AuthSignal,
+): CommandOutcome => ({
   parsed: parseCommand(text),
   source: 'grammar',
   note,
+  ...(authSignal ? { authSignal } : {}),
 });
 
 /** The host's interpreter, or null. Read per call so a host may declare one late. */
@@ -123,10 +147,13 @@ async function interpretThenFallBack(
     if (effective.aborted) throw error;
     if (error instanceof InterpreterTimeoutError) return grammarOutcome(text, NOTE_TIMEOUT);
     if (error instanceof InterpreterUnavailableError) {
-      if (error.status === 401 || error.status === 403) {
-        return grammarOutcome(text, NOTE_SIGN_IN);
+      // Three different things, three different messages, three different
+      // consequences for the session UI.
+      if (error.status === 401) return grammarOutcome(text, NOTE_SIGN_IN, 'signed-out');
+      if (error.status === 403) return grammarOutcome(text, NOTE_NO_ACCESS, 'forbidden');
+      if (error.status === 503) {
+        return grammarOutcome(text, NOTE_AUTH_UNAVAILABLE, 'unavailable');
       }
-      if (error.status === 503) return grammarOutcome(text, NOTE_AUTH_UNAVAILABLE);
       return grammarOutcome(text, NOTE_UNAVAILABLE);
     }
     if (error instanceof SyntaxError) return grammarOutcome(text, NOTE_UNUSABLE);

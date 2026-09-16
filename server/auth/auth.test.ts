@@ -171,9 +171,22 @@ describe('authenticate', () => {
     }
   });
 
-  it('expired when the cookie cannot even be opened', async () => {
+  it('a THROW while opening the cookie is transient, not expired', async () => {
+    // Construction failing is an operational problem — a misconfigured cookie
+    // password, say — and says nothing about this user's session. Reporting it
+    // as `expired` would sign out every user over a config mistake.
     const { provider } = providerWith({ loadThrows: true });
-    expect((await provider.authenticate(withSession())).status).toBe('expired');
+    expect((await provider.authenticate(withSession())).status).toBe('transient');
+  });
+
+  it('a THROW from authenticate() is transient — a JWKS/network failure is not a logout', async () => {
+    // The SDK reports everything it can classify as a TYPED authenticated:false.
+    // A throw is verification that could not be COMPLETED, and treating that as
+    // "expired" converts a provider incident into a forced logout for everyone.
+    const { provider } = providerWith({ authenticateThrows: true });
+    const result = await provider.authenticate(withSession());
+    expect(result.status).toBe('transient');
+    expect(result.status).not.toBe('expired');
   });
 });
 
@@ -392,7 +405,9 @@ describe('logout', () => {
 
   it('is harmless with no session', async () => {
     const { provider, calls } = providerWith();
-    const response = await provider.logout(new Request('https://apsis.test/api/auth/logout'));
+    const response = await provider.logout(
+      new Request('https://apsis.test/api/auth/logout', { method: 'POST' }),
+    );
     expect(response.status).toBe(302);
     expect(calls.logout).toBe(0);
   });

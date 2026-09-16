@@ -38,6 +38,7 @@ async function submit(page: Page, text: string) {
 const note = (page: Page) => page.locator('[data-interpreter-note]');
 const signIn = (page: Page) => page.locator('[data-auth-signin]');
 const signOut = (page: Page) => page.locator('[data-auth-signout]');
+const unavailable = (page: Page) => page.locator('[data-auth-unavailable]');
 
 test.describe('the default build is untouched by authentication', () => {
   test('no interpreter declared: no sign-in affordance, and zero requests', async ({ page }) => {
@@ -231,5 +232,121 @@ test.describe('accessibility and the rest of Apsis', () => {
     await page.waitForTimeout(3000);
     await expect(page.locator('[data-persistence]')).toContainText('restored');
     expect(errors, errors.join(' | ')).toEqual([]);
+  });
+});
+
+/**
+ * TRANSITIONS, not isolated states.
+ *
+ * Each of these starts from a SIGNED-IN page and then makes one protected call
+ * fail in a particular way. What matters is where the UI ends up — three
+ * different statuses have three different correct destinations, and collapsing
+ * them is how a user gets told to sign in when they already are.
+ */
+test.describe('session transitions from signed-in', () => {
+  const signedInThen = async (page: Page, status: number, body: object, headers = {}) => {
+    await declareInterpreter(page);
+    await mockSession(page, { authenticated: true, userId: 'user_1' });
+    await page.route(`**${ENDPOINT}`, (route) => route.fulfill({ status, json: body, headers }));
+    await boot(page);
+    // Precondition: genuinely signed in before anything fails.
+    await expect(signOut(page)).toBeVisible();
+    await submit(page, 'find cold leads in Florida');
+    await page.waitForTimeout(1300);
+  };
+
+  test('A · 401 → signed out: sign-out disappears, sign-in appears', async ({ page }) => {
+    await signedInThen(page, 401, { error: 'unauthenticated' });
+
+    await expect(page.locator('.command-result')).toContainText('leads matched');
+    await expect(signOut(page)).toHaveCount(0);
+    await expect(signIn(page)).toBeVisible();
+    await expect(note(page)).toHaveText(/sign in to use the language model/);
+  });
+
+  test('B · 403 → stays signed in, and does NOT tell the user to sign in', async ({ page }) => {
+    await signedInThen(page, 403, { error: 'forbidden' });
+
+    await expect(page.locator('.command-result')).toContainText('leads matched');
+    // The account is signed in; sending them to a sign-in page would loop.
+    await expect(signOut(page)).toBeVisible();
+    await expect(signIn(page)).toHaveCount(0);
+    await expect(note(page)).toHaveText(/not available for this account/);
+    await expect(note(page)).not.toHaveText(/sign in to use/);
+  });
+
+  test('C · 503 → stays signed in, no signed-out claim', async ({ page }) => {
+    await signedInThen(page, 503, { error: 'auth_unavailable' }, { 'retry-after': '5' });
+
+    await expect(page.locator('.command-result')).toContainText('leads matched');
+    await expect(signOut(page)).toBeVisible();
+    await expect(signIn(page)).toHaveCount(0);
+    await expect(note(page)).toHaveText(/temporarily unavailable/);
+  });
+});
+
+test.describe('session status on first load', () => {
+  test('a 503 from /api/session does not claim signed out', async ({ page }) => {
+    await declareInterpreter(page);
+    await page.route('**/api/session', (route) =>
+      route.fulfill({ status: 503, headers: { 'retry-after': '5' }, json: { error: 'auth_unavailable' } }),
+    );
+    await boot(page);
+
+    // Neither a sign-in invitation nor a false signed-in state.
+    await expect(signIn(page)).toHaveCount(0);
+    await expect(signOut(page)).toHaveCount(0);
+    await expect(unavailable(page)).toBeVisible();
+  });
+
+  test('an unreachable /api/session does not claim signed out either', async ({ page }) => {
+    await declareInterpreter(page);
+    await page.route('**/api/session', (route) => route.abort());
+    await boot(page);
+    await expect(signIn(page)).toHaveCount(0);
+    await expect(unavailable(page)).toBeVisible();
+  });
+});
+
+test.describe('sign-out is a POST', () => {
+  test('the control is a submit button in a same-origin POST form', async ({ page }) => {
+    await declareInterpreter(page);
+    await mockSession(page, { authenticated: true, userId: 'user_1' });
+    await boot(page);
+
+    const shape = await signOut(page).evaluate((el) => {
+      const form = el.closest('form');
+      return {
+        tag: el.tagName,
+        type: el.getAttribute('type'),
+        method: form?.getAttribute('method')?.toLowerCase() ?? null,
+        action: form?.getAttribute('action') ?? null,
+        // A GET link would be the defect: any cross-site <img> could fire it.
+        isAnchor: el.tagName === 'A',
+      };
+    });
+    expect(shape.isAnchor, 'sign-out must not be a link').toBe(false);
+    expect(shape.tag).toBe('BUTTON');
+    expect(shape.type).toBe('submit');
+    expect(shape.method).toBe('post');
+    expect(shape.action).toBe('/api/auth/logout');
+  });
+
+  test('it is reachable and operable from the keyboard', async ({ page }) => {
+    await declareInterpreter(page);
+    await mockSession(page, { authenticated: true, userId: 'user_1' });
+    let posts = 0;
+    await page.route('**/api/auth/logout', (route) => {
+      posts++;
+      expect(route.request().method()).toBe('POST');
+      return route.fulfill({ status: 302, headers: { location: '/' }, body: '' });
+    });
+    await boot(page);
+
+    await signOut(page).focus();
+    await expect(signOut(page)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(900);
+    expect(posts).toBe(1);
   });
 });

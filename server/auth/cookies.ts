@@ -117,3 +117,14 @@ export function safeReturnTo(value: string | null | undefined): string {
   if (/[\\]/.test(value) || /^\/[^/]*:/.test(value)) return '/';
   return value;
 }
+
+/**
+ * Clear a session cookie that failed to open.
+ *
+ * Shared by the endpoint and the session route so a corrupt cookie cannot wedge
+ * a browser into a permanent 401/signed-out loop from either direction.
+ */
+export const clearSessionCookie = (request: Request): string => {
+  const secure = isSecureRequest(request);
+  return clearCookie(sessionCookieName(secure), secure);
+};

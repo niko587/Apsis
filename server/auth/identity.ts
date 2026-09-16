@@ -87,16 +87,49 @@ export const publicSessionOf = (result: AuthResult): PublicSession =>
  * tests and runs identically in local development — the adapter stays a
  * three-line shim, which is the rule that keeps logic out of `api/`.
  *
- * Always 200: "are you signed in?" is a question, not an error, and answering
- * 401 would make every page load look like a failure.
+ * TWO THINGS THIS MUST GET RIGHT, both learned the hard way:
+ *
+ * 1. **A rotated session has to be written back.** `authenticate()` may have
+ *    refreshed and rotated the sealed session on the way through. Returning
+ *    `authenticated: true` while dropping that `Set-Cookie` consumes the
+ *    rotation and leaves the browser holding a superseded token — the next
+ *    refresh then fails terminally and the user is signed out for no reason
+ *    they could observe. The interpreter endpoint already does this; so does
+ *    this one.
+ *
+ * 2. **`transient` is not `authenticated: false`.** A WorkOS timeout, 429, 5xx
+ *    or network failure is not proof of a logout, and reporting one as "signed
+ *    out" makes the UI throw away a perfectly good session and show a sign-in
+ *    link during an outage. It answers 503 and keeps the cookie (D40).
  */
 export async function sessionResponse(
   request: Request,
   authenticate: Authenticate | null,
+  /** Clears a terminally invalid cookie so a corrupt one cannot wedge the browser. */
+  clearSession?: (request: Request) => string,
 ): Promise<Response> {
   const result: AuthResult = authenticate ? await authenticate(request) : { status: 'anonymous' };
-  return new Response(JSON.stringify(publicSessionOf(result)), {
-    status: 200,
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+
+  const headers = new Headers({
+    'content-type': 'application/json',
+    'cache-control': 'no-store',
   });
+
+  if (result.status === 'transient') {
+    headers.set('retry-after', String(Math.max(1, Math.ceil(result.retryAfter ?? 5))));
+    // Note what is NOT here: no Set-Cookie. The session is untouched.
+    return new Response(JSON.stringify({ error: 'auth_unavailable' }), {
+      status: 503,
+      headers,
+    });
+  }
+
+  if (result.status === 'authenticated' && result.setCookie) {
+    headers.append('set-cookie', result.setCookie);
+  }
+  if (result.status === 'expired' && clearSession) {
+    headers.append('set-cookie', clearSession(request));
+  }
+
+  return new Response(JSON.stringify(publicSessionOf(result)), { status: 200, headers });
 }

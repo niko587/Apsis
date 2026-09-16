@@ -270,6 +270,43 @@ GET /api/session
   `{ url, state, codeVerifier }`), so neither is hand-generated. `state` is the
   CSRF defence for the redirect; PKCE means an intercepted `code` is useless
   without the verifier.
+
+### F.1 The challenge cookie is NOT sealed, and that is deliberate
+
+An earlier draft of this section said the `state` + `codeVerifier` challenge was
+"sealed". The implementation stores URL-encoded JSON in an HttpOnly, `Secure`,
+`__Host-`-prefixed, `SameSite=Lax` cookie with a ten-minute lifetime. **The
+contract is amended to match the implementation**, because sealing it buys
+nothing here — and the reasoning matters more than the verdict:
+
+*What would sealing defend against?* Only an attacker who can already READ the
+cookie. `HttpOnly` excludes script; `Secure` + `__Host-` exclude the network and
+any other origin or subdomain. What is left is an attacker with the user's
+device or a memory dump — and at that point they have the *session* cookie too,
+which is far more valuable than a ten-minute login nonce.
+
+*Is the content sensitive?* No. `state` is a random value whose only job is to
+be compared for equality on return, and the PKCE `codeVerifier` is a one-time
+secret bound to a single authorization `code` that expires in minutes and can be
+exchanged once. Neither identifies the user, and neither is useful after the
+callback.
+
+*Could an attacker WRITE one?* They cannot forge a `__Host-` cookie from another
+origin, and a same-origin script that could set it has already lost the game.
+Even given a forged challenge, `state` must still match the value the provider
+echoes back, and the `code` must still exchange against the matching verifier.
+
+*So what would sealing actually add?* One more use of the cookie password, more
+code on the login path, and a second encrypted format to reason about — for a
+threat already excluded by the cookie attributes. **D39 applies in both
+directions:** do not hand-roll session crypto, and do not add crypto that
+defends against nothing.
+
+**What is NOT being claimed:** this is not an argument that sealing is wrong in
+general, and it says nothing about the *session* cookie, which is sealed by the
+SDK and must stay that way. If the challenge ever carries something identifying
+— an email, a tenant hint, a return payload with user data — this reasoning
+expires and it must be sealed.
 - **`returnTo` is allowlisted:** must begin with a single `/`, must not begin
   with `//` or `/\`, must not contain a scheme. Anything else becomes `/`. This
   is the open-redirect defence and it is not optional — it applies to the login

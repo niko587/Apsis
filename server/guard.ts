@@ -222,6 +222,28 @@ const fail = (status: number, code: string, headers?: Record<string, string>): G
 });
 
 /**
+ * Same-origin enforcement, shared by every state-changing endpoint.
+ *
+ * Extracted so the logout route enforces exactly the policy the interpreter
+ * does. A second, slightly different copy of this check is how one endpoint
+ * ends up quietly weaker than the rest.
+ *
+ * An ABSENT `Origin` is allowed: that is a non-browser caller (curl, a health
+ * check), and browsers always send it on a cross-site POST. A PRESENT and wrong
+ * one is a cross-site attempt. `Sec-Fetch-Site` is the modern, unspoofable
+ * second opinion.
+ */
+export function sameOrigin(request: Request, allowedOrigin?: string): boolean {
+  if (allowedOrigin) {
+    const origin = request.headers.get('origin');
+    if (origin !== null && origin !== allowedOrigin) return false;
+  }
+  const site = request.headers.get('sec-fetch-site');
+  if (site !== null && site !== 'same-origin' && site !== 'none') return false;
+  return true;
+}
+
+/**
  * Transport guards: everything that is free, plus the IP backstop.
  *
  * Split from the body checks so AUTHENTICATION can run between them (D37). The
@@ -239,16 +261,7 @@ export async function guardTransport(
     return fail(405, 'method_not_allowed', { allow: 'POST' }) as { ok: false; failure: GuardFailure };
   }
 
-  // Same-origin only. An absent Origin is a non-browser caller (curl, a health
-  // check) and is allowed; a PRESENT and wrong one is a cross-site attempt.
-  if (config.allowedOrigin) {
-    const origin = request.headers.get('origin');
-    if (origin !== null && origin !== config.allowedOrigin) {
-      return fail(403, 'cross_origin') as { ok: false; failure: GuardFailure };
-    }
-  }
-  const site = request.headers.get('sec-fetch-site');
-  if (site !== null && site !== 'same-origin' && site !== 'none') {
+  if (!sameOrigin(request, config.allowedOrigin)) {
     return fail(403, 'cross_origin') as { ok: false; failure: GuardFailure };
   }
 

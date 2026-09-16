@@ -31,7 +31,7 @@ import type { Authenticate } from './auth/identity';
 import { LIMITS } from './prompt';
 import { ProviderError, providerFromEnv, type ModelProvider } from './provider';
 import { authProviderFromEnv } from './auth/provider';
-import { clearCookie, isSecureRequest, sessionCookieName } from './auth/cookies';
+import { clearSessionCookie } from './auth/cookies';
 
 /** Inner fails first, so the layer outside never has to guess (contract §K). */
 export const TIMEOUTS = { provider: 3000, total: 3500 } as const;
@@ -332,15 +332,6 @@ export function createInterpretHandler(options: HandlerOptions = {}) {
       return errorResponse(502, 'provider_failed');
     }
   };
-}
-
-/**
- * Clear a session cookie that failed to open, so a corrupt cookie cannot wedge
- * the browser into a 401 loop.
- */
-function clearSessionCookie(request: Request): string {
-  const secure = isSecureRequest(request);
-  return clearCookie(sessionCookieName(secure), secure);
 }
 
 /**
