@@ -12,13 +12,10 @@ what, why now, acceptance, suggested model (spec §2)._
   history, refuted hypotheses and diagnostic evidence preserved in
   `docs/PERFORMANCE_BASELINE.md`; do not prune it.
 
-**Open defect (not a product bug):** CI is red. The reachability suite's
-`inViewport` check demands *total* containment, and on the runner's Linux font
-metrics the last rail panel lands 2px past the viewport bottom while remaining
-genuinely reachable (`receivesPointer=true`, hit resolves to the `h2`). Passes
-on macOS, fails on the runner. Fix is to require the hit-tested point in the
-viewport rather than the whole box — still catches D12, whose failure had
-`top=1322 bottom=1350` against a 1000px viewport and `hitAt centre=null`.
+**CI trust restored (2026-09-15).** The reachability suite's over-strict
+containment check is fixed (D21); it now asserts the click point rather than the
+whole bounding box. No product or layout change was needed — the layout was
+verified sound first.
 
 **PERFORMANCE IS CLOSED.** The owner's final A/B on the real 2020 M1 MacBook
 Air: dramatically smoother, visual difference tiny and still just as good, and
@@ -30,24 +27,15 @@ optimisation is warranted or wanted.
 The top priority is now the product's own documented largest gap: the real data
 boundary (`PROJECT_MASTER_PLAN.md` Arc A).
 
-## 1. Fix the reachability suite's 2px over-strictness — CI is RED
-**What:** `e2e/reachability.spec.ts` requires a panel's bounding box to be
-*entirely* inside the viewport. On the CI runner's Linux font metrics the last
-rail panel lands 2px past the bottom (`top=991 bottom=1002 viewportH=1000`)
-while being genuinely reachable — `receivesPointer=true`, and the hit test
-resolves to the panel's own `h2`. Require the **hit-tested point** to be in the
-viewport rather than the whole box.
-**Why now:** it is the only red gate, it is a defect in the test rather than the
-product, and it has been failing intermittently since round 5 (round 6 passed by
-a pixel of luck). A check suite nobody trusts is worse than none — and this one
-exists precisely because D12 shipped with every other gate green.
-**Acceptance:** still fails when `.rail` is reverted to `overflow: hidden` —
-that regression had `top=1322 bottom=1350` against a 1000px viewport and
-`hitAt centre=null`, so it is caught by a mile either way; green on CI twice in
-a row. **Not a performance change.**
-**Model:** Opus. Small.
+## 0. (closed) Reachability suite over-strictness — FIXED, CI trust restored
+The assertion required an element's whole bounding box inside the viewport,
+which made the verdict depend on font metrics; it now asserts that the click
+point is on screen and hit-tests to the target. Verified first that the layout
+was sound (last panel fully inside the rail at max scroll at all three
+viewports, 14px to spare) — **no product or layout change was made**. Still
+catches D12: reverting `.rail` to `overflow: hidden` turns 6 of 8 red. See D21.
 
-## 2. Prove the transport seam with a second source (replay) — NEXT MILESTONE
+## 1. Prove the transport seam with a second source (replay) — NEXT MILESTONE
 **What:** implement a replay source that records a session's `LeadEvent`s and
 plays them back, alongside the simulator, selectable by URL param.
 **Why this is the highest-value product work now that performance is closed:**
@@ -57,13 +45,13 @@ and nothing below it exists. Arc A step 4 is exactly this: a second concrete
 source to prove the seam actually swaps. It is the prerequisite for any real CRM
 integration, it makes sessions deterministically reproducible (which would have
 saved several rounds of the performance investigation), and it builds the
-event-log serialization that persistence needs anyway, shrinking item 3.
+event-log serialization that persistence needs anyway, shrinking item 2.
 **Acceptance:** `?source=replay` reproduces a recorded session deterministically;
 the simulator is unchanged; the contract is documented in `ARCHITECTURE.md`;
 `ingest` remains the only mutator (D1).
 **Model:** Opus.
 
-## 3. Persistence v1
+## 2. Persistence v1
 **What:** Snapshot/rehydrate so reload does not reseed: persist the event log
 (or book + log tail) to localStorage/IndexedDB behind a small interface in
 `src/state/`, restoring through `ingest` so the one-mutator law holds.
@@ -74,7 +62,7 @@ builds most of its foundation.
 control exists; tests cover snapshot round-trip; D1 untouched.
 **Model:** Opus.
 
-## 4. Remaining §15 drill dimensions
+## 3. Remaining §15 drill dimensions
 **What:** Add `campaign` and `source` fields to the domain + seed (weighted,
 deterministic), then registry entries for campaign / source / agent /
 timeframe; UI needs nothing new (registry-driven).
@@ -83,7 +71,7 @@ sum to members — existing test pattern); parser optionally learns
 `from <campaign>` later.
 **Model:** Opus (domain), no visual work needed.
 
-## 5. §14 spatial individual transition
+## 4. §14 spatial individual transition
 **What:** At full drill depth + selection, resolve the lead in-field (camera
 completes the approach; a compact in-scene card or emphasized node), demoting
 the rail panel to secondary.
@@ -92,7 +80,7 @@ camera journey; reduced-motion path preserved; a11y parity (selection still
 announced, panel still exists).
 **Model:** Fable, with the CameraRig contract from `ARCHITECTURE.md`.
 
-## 6. LLM command parsing (opt-in)
+## 5. LLM command parsing (opt-in)
 **What:** `parseCommand` alternative returning the same `LeadQuery` via a
 model call, gated on a configured key; grammar remains the fallback; ignored-
 words honesty must survive (model must report unmapped clauses).
@@ -100,7 +88,7 @@ words honesty must survive (model must report unmapped clauses).
 phrasings parse; funnel/execution untouched.
 **Model:** Opus.
 
-## 7. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
+## 6. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
 **What:** precompute stage colours as RGB triples so no colour string is parsed
 in a hot path, and add an out-parameter `positionInto(lead, out)` so the frame
 path allocates nothing.

@@ -60,8 +60,11 @@ const VIEWPORTS = [
 ];
 
 interface Geometry {
-  inViewport: boolean;
+  /** The assertion: can a user actually reach and operate this element? */
+  reachable: boolean;
   receivesPointer: boolean;
+  /** Diagnostic only — whether the WHOLE box fits. Never asserted; see below. */
+  fullyInViewport: boolean;
   hit: string | null;
   top: number;
   bottom: number;
@@ -72,27 +75,54 @@ interface Geometry {
 /**
  * Geometry + hit test in one round trip.
  *
- * `receivesPointer` is the half that matters: a box can be inside the viewport
- * and still be covered by an overlay, and `elementFromPoint` is the only thing
- * that knows. Ancestor and descendant both count as a hit — targeting an `h2`
- * legitimately returns the `h2`, a `<span>` inside it, or the panel itself.
+ * WHAT THIS ASSERTS, AND WHY IT CHANGED:
+ * the original check required the element's ENTIRE bounding box to sit inside
+ * the viewport. That is stricter than the question this suite exists to ask —
+ * "can a real user reach and interact with this?" — and it made the result
+ * depend on font metrics. On the CI runner's Linux fonts the last rail panel's
+ * heading landed at `top=991 bottom=1002` against a 1000px viewport: two pixels
+ * of an eleven-pixel heading were outside, while `elementFromPoint` at its
+ * centre resolved to the heading itself and a real click landed on it. The test
+ * failed an element the user can see and click, and passed or failed by a pixel
+ * depending on the platform's font rendering.
+ *
+ * The invariant is now the semantic one: the point a user would click must be
+ * inside the viewport, and hit-testing at that point must resolve to the target.
+ * That is not a loosened tolerance — no slop value was introduced — it is a
+ * different and more accurate question. `fullyInViewport` is still computed and
+ * still reported in failure messages, because knowing a box is clipped is useful
+ * even when it is not a failure.
+ *
+ * `receivesPointer` remains the half that matters: a box can be inside the
+ * viewport and still be covered by an overlay, and `elementFromPoint` is the
+ * only thing that knows. Ancestor and descendant both count as a hit — targeting
+ * an `h2` legitimately returns the `h2`, a `<span>` inside it, or the panel.
  */
 async function geometryOf(target: Locator): Promise<Geometry> {
   return target.evaluate((el) => {
     const r = el.getBoundingClientRect();
-    const inViewport =
-      r.width > 0 &&
-      r.height > 0 &&
+    const hasBox = r.width > 0 && r.height > 0;
+    const fullyInViewport =
+      hasBox &&
       r.top >= 0 &&
       r.left >= 0 &&
       r.bottom <= window.innerHeight &&
       r.right <= window.innerWidth;
-    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+
+    // The point a click would be delivered to.
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const centreOnScreen =
+      cx >= 0 && cy >= 0 && cx <= window.innerWidth && cy <= window.innerHeight;
+
+    const hit = document.elementFromPoint(cx, cy);
     const receivesPointer =
       !!hit && (hit === el || el.contains(hit) || hit.contains(el));
+
     return {
-      inViewport,
+      reachable: hasBox && centreOnScreen && receivesPointer,
       receivesPointer,
+      fullyInViewport,
       hit: hit ? `${hit.tagName.toLowerCase()}.${String(hit.className || '')}`.trim() : null,
       top: r.top,
       bottom: r.bottom,
@@ -126,7 +156,7 @@ async function wheelIntoView(
 
   let geometry = await geometryOf(target);
   for (let ticks = 1; ticks <= 40; ticks++) {
-    if (geometry.inViewport && geometry.receivesPointer) return { geometry, ticks: ticks - 1 };
+    if (geometry.reachable) return { geometry, ticks: ticks - 1 };
 
     const before = await railScrollTop(rail);
     // Direction is derived from where the target actually is, so this works
@@ -171,9 +201,10 @@ for (const vp of VIEWPORTS) {
         const h2 = panel.getByRole('heading', { level: 2 });
         const { geometry, ticks } = await wheelIntoView(page, rail, h2);
 
-        if (!geometry.inViewport || !geometry.receivesPointer) {
+        if (!geometry.reachable) {
           unreachable.push(
-            `${label}: inViewport=${geometry.inViewport} receivesPointer=${geometry.receivesPointer} ` +
+            `${label}: reachable=${geometry.reachable} receivesPointer=${geometry.receivesPointer} ` +
+              `fullyInViewport=${geometry.fullyInViewport} ` +
               `top=${Math.round(geometry.top)} bottom=${Math.round(geometry.bottom)} ` +
               `viewportH=${vp.height} hitAt centre=${geometry.hit} afterWheelTicks=${ticks}`,
           );
@@ -238,7 +269,7 @@ test.describe('interaction reachability', () => {
       .filter({ has: page.getByRole('heading', { level: 2, name: /^Leads\b/ }) });
 
     const { geometry } = await wheelIntoView(page, rail, list.getByRole('heading', { level: 2 }));
-    expect(geometry.inViewport && geometry.receivesPointer, 'Leads panel must be reachable').toBe(true);
+    expect(geometry.reachable, 'Leads panel must be reachable').toBe(true);
 
     const row = list.getByRole('option').first();
     await expect(row).toBeVisible();
@@ -263,7 +294,10 @@ test.describe('interaction reachability', () => {
   test('the command bar is reachable without scrolling and accepts input', async ({ page }) => {
     const input = page.getByLabel('Command Apsis');
     const geometry = await geometryOf(input);
-    expect(geometry.inViewport, 'command bar must be on screen at load').toBe(true);
+    // The command bar is §13's primary interface and sits in the main stage, not
+    // in a scroll container — so here full containment IS the right assertion:
+    // any clipping of it would be a real layout regression, not font metrics.
+    expect(geometry.fullyInViewport, 'command bar must be fully on screen at load').toBe(true);
     expect(geometry.receivesPointer, `command bar is occluded by ${geometry.hit}`).toBe(true);
 
     await input.click();

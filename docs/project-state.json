@@ -29,7 +29,7 @@
   "checks": {
     "typescript": "clean (app + node + e2e projects)",
     "tests": "88/88 passing (8 files)",
-    "e2e": "8/8 passing (3 viewports); proven to fail on the D12 regression",
+    "e2e": "8/8 passing (3 viewports); asserts the click point, not whole-box containment (D21); proven to fail on the D12 regression",
     "lint": "exit 0 (R3F idiom warnings in LeadField.tsx only)",
     "build": "green (~1.27MB, 350KB gz)",
     "runtime_console_errors": 0,
@@ -83,7 +83,8 @@
     "no raw elapsed seconds in shader noise domains (wrapped phases, periodic lattice)",
     "Apsis is not Cortex; ~/Downloads/cortex is out of scope",
     "reachability is proven with real input events (wheel + elementFromPoint + click), never scrollIntoView or Playwright auto-scroll (D20)",
-    "never rewrite published history on main without owner instruction (D19)"
+    "never rewrite published history on main without owner instruction (D19)",
+    "reachability asserts that the click point is on screen and hit-tests to the target, never pixel-perfect bounding-box containment (D21)"
   ],
   "blocked": [],
   "performance": {

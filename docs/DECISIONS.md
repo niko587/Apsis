@@ -134,3 +134,28 @@ Also fixed here: `e2e/**` is excluded from vitest in `vite.config.ts`. Its
 default globs claim `**/*.spec.ts`, so without that line `npx vitest run` —
 the command the protocol and `project-state.json` both name — tries to open a
 Playwright file and fails. Two runners, two directories, no overlap.
+
+## D21 — Reachability asserts the click point, not the whole box (2026-09-15)
+D20's suite required an element's ENTIRE bounding box inside the viewport. That
+is stricter than the question the suite exists to ask, and it made the verdict
+depend on font metrics: on the CI runner's Linux fonts the last rail panel's
+heading landed at `top=991 bottom=1002` against a 1000px viewport — two pixels
+of an eleven-pixel heading outside — while `elementFromPoint` at its centre
+resolved to the heading itself and a real click landed. The test failed an
+element a user can see and click, and flipped colour by a pixel depending on
+platform. CI was red from round 5; round 6 passed by luck.
+**Verified first that this was a TEST defect, not a layout one**: at maximum
+scroll the last panel sits fully inside the rail at 1280x800, 1600x1000 and
+2560x1440, with the rail's 14px bottom padding to spare. No product or layout
+change was made, and none was warranted.
+The invariant is now semantic: **the point a click would be delivered to must be
+on screen, and hit-testing there must resolve to the target.** No tolerance
+value was introduced — this is a different question, not a loosened one.
+`fullyInViewport` is still computed and still printed in failure messages, and
+is still ASSERTED for the command bar, which sits in the main stage rather than
+a scroll container: clipping there would be a real regression.
+Proven, not assumed: reverting `.rail` to `overflow: hidden` still turns 6 of 8
+tests red, reporting `reachable=false receivesPointer=false hitAt centre=null`
+with `top=1364 bottom=1392` against a 1000px viewport. Restored afterwards and
+confirmed byte-identical to origin/main.
+Forbids: asserting pixel-perfect containment as a proxy for reachability.
