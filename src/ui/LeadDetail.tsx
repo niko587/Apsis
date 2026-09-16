@@ -1,8 +1,19 @@
 /**
  * Lead detail.
  *
- * Shows the selected lead, falling back to the hovered one so the field is
- * readable on the way to a click rather than only after it.
+ * Shows the selected lead, falling back to a lead hovered IN THE FIELD so the
+ * field is readable on the way to a click rather than only after it.
+ *
+ * WHY THE FALLBACK IS SCOPED TO THE FIELD (D25): this panel grows from a 79px
+ * placeholder to a ~389px record the moment it has a lead to show, and it sits
+ * above the Leads list. Previewing a lead hovered in that list therefore pushed
+ * the very row under the pointer ~310px down the rail; where the rail had no
+ * scroll slack to absorb it (2560x1440), the click that followed landed on bare
+ * rail and selected nothing. A row must not move because you pointed at it.
+ *
+ * Nothing is lost: the row already carries name, stage and score, and its
+ * accessible name carries segment and location too. The field is the surface
+ * with nothing readable on it, which is what the fallback was always for.
  */
 
 import { useMemo } from 'react';
@@ -23,6 +34,7 @@ const rel = (ms: number) => {
 export function LeadDetail() {
   const selectedId = useApsis((s) => s.selectedLeadId);
   const hoveredId = useApsis((s) => s.hoveredLeadId);
+  const hoverSource = useApsis((s) => s.hoverSource);
   const leads = useApsis((s) => s.leads);
   const feed = useApsis((s) => s.feed);
   // Throttled: keying off the raw revision rebuilds this on every ingested
@@ -33,7 +45,9 @@ export function LeadDetail() {
   const requestWork = useApsis((s) => s.requestWork);
   const taskRevision = useApsis((s) => s.taskRevision);
 
-  const id = selectedId ?? hoveredId;
+  // A selection always wins. A hover only previews when it came from the field
+  // — see the header: a list hover would move the row being pointed at.
+  const id = selectedId ?? (hoverSource === 'list' ? null : hoveredId);
   // `revision` is read above so this recomputes as the lead's score moves —
   // without it the panel would freeze at whatever the score was on selection.
   const lead = useMemo(() => (id ? leads.get(id) : null), [id, leads, revision]);

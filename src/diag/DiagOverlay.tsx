@@ -76,7 +76,11 @@ export function DiagOverlay() {
           if (!p) return 'isolated (replay)';
           if (!p.active) return `unavailable${p.lastError ? ` (${p.lastError})` : ''}`;
           const state = p.restored ? 'restored' : `fresh(${p.outcome ?? 'pending'})`;
-          return `${p.store} v${p.version} · ${state} · ${p.events} events${p.sealed ? ' · SEALED' : ''}${p.lastError ? ` · ERR ${p.lastError}` : ''}`;
+          // Both numbers, always. `events` is the in-memory log; `durable` is
+          // what is actually on disk. They differ for up to one write window,
+          // and printing only the first would claim durability the session has
+          // not earned yet.
+          return `${p.store} v${p.version} · ${state} · ${p.events} events (${p.persisted} durable)${p.sealed ? ' · SEALED' : ''}${p.lastError ? ` · ERR ${p.lastError}` : ''}`;
         })()}
       </div>
       <div style={{ marginTop: 5, color: '#2fe08a', whiteSpace: 'normal', maxWidth: 232 }}>{verdict}</div>

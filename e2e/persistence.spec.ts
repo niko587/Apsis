@@ -24,6 +24,38 @@ const bookedCount = async (page: Page): Promise<number> => {
 const persistenceLine = async (page: Page): Promise<string> =>
   (await page.locator('[data-persistence]').textContent()) ?? '';
 
+const eventCount = (line: string) => Number(line.match(/· (\d+) events/)?.[1] ?? '0');
+const durableCount = (line: string) => Number(line.match(/\((\d+) durable\)/)?.[1] ?? '0');
+
+/**
+ * Wait until the in-memory log has actually reached the disk.
+ *
+ * NOT a tidier sleep — a real synchronization point, and the absence of one is
+ * what made this suite flaky. Writes are throttled at 1.5s, so the tail of the
+ * log is routinely still in memory; `pagehide` starts a flush on reload but
+ * cannot await it, so an eager reload could drop the last couple of events and
+ * the session came back with 48 of the 50 that had been reported. The old
+ * assertion compared an IN-MEMORY count taken before the reload against a
+ * RESTORED count taken after it, which is a comparison the architecture never
+ * promised to satisfy.
+ *
+ * Waiting for `durable === events` keeps the assertion at full strength — every
+ * event that existed still has to come back — while asking it at a moment when
+ * that is a claim the system has actually made.
+ */
+async function settleDurable(page: Page): Promise<number> {
+  await expect
+    .poll(
+      async () => {
+        const line = await persistenceLine(page);
+        return durableCount(line) === eventCount(line) && eventCount(line) > 0;
+      },
+      { timeout: 15_000, message: 'the event log never became fully durable' },
+    )
+    .toBe(true);
+  return eventCount(await persistenceLine(page));
+}
+
 async function boot(page: Page, url = APP, settleMs = 3500) {
   await page.goto(url);
   await expect(page.getByRole('heading', { name: /^Leads\b/ })).toBeVisible();
@@ -45,9 +77,9 @@ test.describe('persistence across reload', () => {
     await page.waitForTimeout(4000);
     await page.getByRole('button', { name: 'Pause feed' }).click();
     const bookedBefore = await bookedCount(page);
-    const eventsBefore = Number(
-      (await persistenceLine(page)).match(/· (\d+) events/)?.[1] ?? '0',
-    );
+    // Every event that exists must also be on disk before a reload can be
+    // expected to bring it back. See settleDurable.
+    const eventsBefore = await settleDurable(page);
     expect(eventsBefore).toBeGreaterThan(0);
 
     // 3. Reload. The saved log must be replayed before any source starts.
@@ -57,8 +89,9 @@ test.describe('persistence across reload', () => {
 
     const line = await persistenceLine(page);
     expect(line).toMatch(/restored/);
-    const eventsAfter = Number(line.match(/· (\d+) events/)?.[1] ?? '0');
-    expect(eventsAfter).toBeGreaterThanOrEqual(eventsBefore);
+    expect(eventCount(line), 'every durable event must come back').toBeGreaterThanOrEqual(
+      eventsBefore,
+    );
 
     // Booked leads are the most visible piece of restored state: only
     // `appointment_booked` reaches the centre (D3), so this number cannot climb
@@ -85,7 +118,7 @@ test.describe('persistence across reload', () => {
     const a = await first.newPage();
     await boot(a);
     await a.waitForTimeout(3000);
-    expect(Number((await persistenceLine(a)).match(/· (\d+) events/)?.[1] ?? '0')).toBeGreaterThan(0);
+    expect(eventCount(await persistenceLine(a))).toBeGreaterThan(0);
     await first.close();
 
     const second = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -103,9 +136,8 @@ test.describe('persistence across reload', () => {
     await boot(page);
     await page.waitForTimeout(4000);
     await page.getByRole('button', { name: 'Pause feed' }).click();
-    const eventsBefore = Number(
-      (await persistenceLine(page)).match(/· (\d+) events/)?.[1] ?? '0',
-    );
+    // Same reason as above: compare against what actually reached the disk.
+    const eventsBefore = await settleDurable(page);
     expect(eventsBefore).toBeGreaterThan(0);
 
     // Run the replay demo — it must neither restore nor record.
@@ -116,8 +148,9 @@ test.describe('persistence across reload', () => {
     await boot(page);
     const line = await persistenceLine(page);
     expect(line).toMatch(/restored/);
-    const eventsAfter = Number(line.match(/· (\d+) events/)?.[1] ?? '0');
-    expect(eventsAfter).toBeGreaterThanOrEqual(eventsBefore);
+    expect(eventCount(line), 'the replay demo must not have eaten the log').toBeGreaterThanOrEqual(
+      eventsBefore,
+    );
 
     await context.close();
   });

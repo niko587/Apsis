@@ -107,19 +107,38 @@ grammar remains the fallback and the oracle.
 proven by a corpus deep-equal test against `parseCommand` and an assertion that
 `fetch` is never called, not by inspection.
 
-## 2. (open defect) Four browser specs red on `main`
-Found at b96108d, **after** progressive reveal landed and unrelated to the
-contract above. Not yet triaged:
-- `e2e/persistence.spec.ts:34`
-- `e2e/reachability.spec.ts:275`
-- `e2e/spatial-focus.spec.ts:82` (@2560×1440)
-- `e2e/spatial-focus.spec.ts:128`
+## 2. (closed) The four red browser specs — triaged, and one was a real bug
+Found at b96108d, fixed at the checkpoint below. They were **not** all stale, and
+the most interesting one was not a test problem at all.
 
-At least one is a stale test assumption rather than a product defect:
-`getByRole('option').nth(1)` at `?leads=400` full depth, where the drill-aware
-roster now yields a single row. The other three are undiagnosed — **do not
-assume they are all stale.** TypeScript, lint and all 165 unit tests are green;
-26 of 30 browser specs pass. Triage before or alongside the LLM milestone.
+- **`spatial-focus.spec.ts:82` @2560×1440 — REAL PRODUCT DEFECT (D25).** The card
+  never appeared because *nothing was ever selected*. `LeadDetail` grows from a
+  79px placeholder to a ~389px record the moment it has a lead to show, and it
+  sits above the Leads list — so the mouseenter on the way to a click pushed the
+  target row ~310px down the rail and the click landed on bare rail. Present
+  since the initial commit, live at every viewport for every human with a mouse;
+  2560×1440 was simply the size where the rail had no scroll slack
+  (`scrollHeight === clientHeight`) to absorb it. Fixed by scoping the detail
+  panel's hover preview to `'field'` hovers. **No spec change was needed.**
+- **`reachability.spec.ts:275` — flaky test (D26).** The roster re-sorts by score
+  as events land, so `.first()` named a different lead at each of the three
+  points the test used it. Now resolves the row to a lead id once and addresses
+  that id.
+- **`spatial-focus.spec.ts:128` — stale assumption.** `nth(1)` at `?leads=400`,
+  where the drill-aware roster leaves exactly one row. Rewritten around the
+  semantic target: focus now *retargets* within the cluster instead of
+  dissolving, which is a stronger claim than the one it replaced.
+- **`persistence.spec.ts:34` — flaky test, and a diagnostic that overstated.**
+  It compared an in-memory event count taken before a reload against the restored
+  count after it. Writes are throttled at 1.5s and `pagehide` cannot await a
+  flush, so the tail was routinely not yet durable (observed: 48 of 50 came
+  back). `PersistenceStatus` now reports `persisted` alongside `events` and the
+  overlay prints both; the test waits for them to converge before reloading.
+
+**Residual, recorded rather than fixed:** up to one write window (1.5s) of events
+can still be lost if the page is closed abruptly. That is inherent to throttled
+writes plus an un-awaitable `pagehide`, and the diagnostics line now tells the
+truth about it instead of implying otherwise.
 
 ## 3. Hygiene — colour precompute / `positionInto` (NOT performance-justified)
 **What:** precompute stage colours as RGB triples so no colour string is parsed

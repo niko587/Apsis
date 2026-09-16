@@ -28,8 +28,8 @@
   },
   "checks": {
     "typescript": "clean (app + node + e2e projects)",
-    "tests": "165/165 passing (12 files)",
-    "e2e": "26/30 passing — 4 RED and untriaged at b96108d: persistence.spec.ts:34, reachability.spec.ts:275, spatial-focus.spec.ts:82 (@2560x1440), spatial-focus.spec.ts:128. At least one is a stale test assumption (option.nth(1) at ?leads=400, where the drill-aware roster now yields one row); the other three are undiagnosed. Do not assume all four are stale. See NEXT_ACTIONS §2.",
+    "tests": "171/171 passing (13 files)",
+    "e2e": "33/33 passing — 8 reachability + 3 hover-stability (D25) + 3 persistence + 10 progressive-reveal + 9 spatial-focus. The four reds at b96108d were triaged, not all stale: one was a real product defect (D25, hover reflow moved the row out from under the pointer), two were flaky tests (D26 positional locator; persistence comparing in-memory against restored), one was a stale positional assumption.",
     "lint": "exit 0 (R3F idiom warnings in LeadField.tsx only)",
     "build": "green (~1.27MB, 350KB gz)",
     "runtime_console_errors": 0,
@@ -68,7 +68,7 @@
     { "key": "model-orchestrator", "spec": "§30-40", "status": "real in ASSISTED mode; programmatic invocation missing (no host mechanism)", "files": ["src/orchestrator/"] },
     { "key": "task-decomposition", "spec": "§38", "status": "missing", "files": [] },
     { "key": "transport", "spec": "§19", "status": "seam PROVEN — two concrete sources behind one LeadSource contract (simulator + replay); still no real backend", "files": ["src/state/source.ts", "src/state/sources.ts", "src/state/replay.ts", "src/state/fixtures/demoSession.ts"] },
-    { "key": "persistence", "spec": "-", "status": "real (v1) — canonical event log in IndexedDB, replayed through ingest on boot; corruption fails loudly; two-step reset; replay mode isolated (D23)", "files": ["src/state/persistence.ts", "src/state/boot.ts", "e2e/persistence.spec.ts"] },
+    { "key": "persistence", "spec": "-", "status": "real (v1) — canonical event log in IndexedDB, replayed through ingest on boot; corruption fails loudly; two-step reset; replay mode isolated (D23). Status reports `persisted` (on disk) alongside `events` (in memory): writes are throttled at 1.5s and pagehide cannot await a flush, so up to one write window can be lost on an abrupt close — recorded honestly, not fixed", "files": ["src/state/persistence.ts", "src/state/boot.ts", "e2e/persistence.spec.ts"] },
     { "key": "nationwide-book", "spec": "-", "status": "real (90 metros, 50 states + DC, population-weighted)", "files": ["src/domain/geography.ts", "src/domain/seed.ts"] },
     { "key": "reachability-e2e", "spec": "-", "status": "real (D20); proven to catch the D12 regression", "files": ["e2e/reachability.spec.ts", "playwright.config.ts"] },
     { "key": "ci", "spec": "-", "status": "real", "files": [".github/workflows/ci.yml"] }
@@ -90,6 +90,9 @@
     "persistence restores by replaying the event log through ingest, never by writing store fields; corrupt history is discarded, never partially applied (D23)",
     "a new seeded lead field hashes the lead id; it never consumes the rng(seed) stream, which would shift the whole book and silently repoint every persisted log (D24)",
     "every drill dimension partitions its parent exactly: one child per lead, counts summing to the parent, nothing dropped (D24)",
+    "no rail panel may resize as a consequence of hovering something below it: a control must not move because you pointed at it, so the detail panel previews only 'field' hovers (D25)",
+    "reachability assertions name a lead and address it by id; nth()/first() is an identity only in tests that are about list ORDER (D26)",
+    "persistence reports what is DURABLE separately from what is in memory; a throttled write window is not yet on disk and nothing may claim otherwise (D25/D26 triage)",
     "Apsis is a browser-only SPA with no server, so any API key reachable by it is public: it must never hold a vendor credential or call a vendor API directly. Model access goes through a host-declared endpoint, and only the user's command text plus a static schema ever leaves the browser — never leads, names, phones, emails, health information or history (CONTRACT_LLM_COMMAND_PARSING §L)",
     "an LLM may never be trusted to report what it failed to understand: every mapped filter must cite a span present verbatim in the input, and unrecognised text is computed by subtracting verified spans — the same way parseCommand earns it (CONTRACT_LLM_COMMAND_PARSING §H)"
   ],

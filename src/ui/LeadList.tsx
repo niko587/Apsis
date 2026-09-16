@@ -188,7 +188,7 @@ export function LeadList() {
       setCursor(next);
 
       const lead = rows[next];
-      if (lead) hover(lead.id);
+      if (lead) hover(lead.id, 'list');
       listRef.current
         ?.querySelector(`[data-idx="${next}"]`)
         ?.scrollIntoView({ block: 'nearest' });
@@ -335,7 +335,11 @@ export function LeadList() {
                 setCursor(i);
                 select(lead.id);
               }}
-              onMouseEnter={() => hover(lead.id)}
+              // `'list'`: lights this lead in the field and marks the row, but
+              // must NOT repopulate the detail panel above — that panel grows
+              // ~310px when it fills, which would shove this row out from under
+              // the pointer that is pointing at it. See HoverSource (D25).
+              onMouseEnter={() => hover(lead.id, 'list')}
             >
               <span className="dot" style={{ background: spec.color }} aria-hidden="true" />
               <span className="ll-name">{lead.name}</span>

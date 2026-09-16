@@ -68,6 +68,11 @@ interface ApsisState {
   selectedLeadId: string | null;
   hoveredLeadId: string | null;
   /**
+   * Where the current hover came from. See `HoverSource` — the rail must not
+   * reflow above a row the pointer is resting on.
+   */
+  hoverSource: HoverSource | null;
+  /**
    * Leads matched by the last command. Empty set means "no active selection",
    * which the field renders as normal — NOT as "everything dimmed".
    */
@@ -94,9 +99,26 @@ interface ApsisState {
   setFocus: (focus: string | null) => void;
   /** Dispatch a unit of agent work at a lead. Returns false if already claimed. */
   requestWork: (leadId: string, kind: LeadEventKind) => boolean;
-  hover: (leadId: string | null) => void;
+  hover: (leadId: string | null, source?: HoverSource) => void;
   applyDecay: (now: number) => void;
 }
+
+/**
+ * Where a hover originated, and why the distinction is load-bearing.
+ *
+ * THE DEFECT THIS EXISTS FOR: `LeadDetail` grows from an 79px placeholder to a
+ * ~389px record the moment a lead is hovered. The Lead panel sits ABOVE the
+ * Leads list in the rail, so pointing at a row pushed that row ~310px down —
+ * out from under the pointer that was pointing at it. Where the rail had no
+ * scroll slack to absorb the shift (measured at 2560x1440: scrollHeight ===
+ * clientHeight) the click that followed landed on bare rail and selected
+ * nothing. `visible must mean operable`, one more time (D12, D21, D25).
+ *
+ * `'field'` hovers are safe: the pointer is over the canvas, so resizing a rail
+ * panel moves nothing underneath it. `'list'` hovers are not, so they light the
+ * field and mark their row but never repopulate the detail panel.
+ */
+export type HoverSource = 'field' | 'list';
 
 const FEED_CAP = 200;
 const RATE_WINDOW_MS = 60_000;
@@ -217,6 +239,7 @@ export const useApsis = create<ApsisState>((set, get) => ({
   ...init(),
   selectedLeadId: null,
   hoveredLeadId: null,
+  hoverSource: null,
   matched: new Set<string>(),
   focus: null,
   revision: 0,
@@ -346,8 +369,12 @@ export const useApsis = create<ApsisState>((set, get) => ({
   // Guarded against redundant writes. Pointer move fires at device rate over a
   // field of thousands of points; setting the same id again would re-render the
   // detail panel on every one of those frames for no change in what it shows.
-  hover: (leadId) =>
-    set((s) => (s.hoveredLeadId === leadId ? s : { hoveredLeadId: leadId })),
+  hover: (leadId, source = 'field') =>
+    set((s) =>
+      s.hoveredLeadId === leadId && s.hoverSource === (leadId === null ? null : source)
+        ? s
+        : { hoveredLeadId: leadId, hoverSource: leadId === null ? null : source },
+    ),
 
   applyDecay: (now) => {
     const { leads } = get();

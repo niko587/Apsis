@@ -281,10 +281,27 @@ test.describe('interaction reachability', () => {
     const { geometry } = await wheelIntoView(page, rail, list.getByRole('heading', { level: 2 }));
     expect(geometry.reachable, 'Leads panel must be reachable').toBe(true);
 
-    const row = list.getByRole('option').first();
-    await expect(row).toBeVisible();
-    const name = (await row.locator('.ll-name').textContent())?.trim() ?? '';
+    const first = list.getByRole('option').first();
+    await expect(first).toBeVisible();
+
+    /**
+     * Resolve the row to a LEAD, then never speak positionally again.
+     *
+     * THE RACE THIS FIXES: the roster is ordered by score and rebuilt as events
+     * land (~9/s under the live feed), so `.first()` names a different lead from
+     * one moment to the next. This test used to read the name off `.first()`,
+     * click `.first()`, and then assert `.first()` was selected — three reads of
+     * a moving target. It failed with the row it had resolved sitting there
+     * correctly selected, because by assertion time a warmer lead had taken
+     * index 0. Identity and name are captured in ONE evaluation so they cannot
+     * disagree with each other either.
+     */
+    const { id, name } = await first.evaluate((el) => ({
+      id: el.id,
+      name: (el.querySelector('.ll-name')?.textContent ?? '').trim(),
+    }));
     expect(name.length, 'a lead row should carry a name').toBeGreaterThan(0);
+    const row = list.locator(`[id="${id}"]`);
 
     await row.click({ timeout: 5_000 });
 
@@ -314,4 +331,85 @@ test.describe('interaction reachability', () => {
     await input.fill('hot leads in Texas');
     await expect(input).toHaveValue('hot leads in Texas');
   });
+});
+
+/**
+ * D25 — a control must not move because you pointed at it.
+ *
+ * FOUND BY A TEST FAILING FOR THE RIGHT REASON. `spatial-focus.spec.ts` began
+ * failing at 2560x1440 only: the card never appeared because nothing was ever
+ * selected. The cause was not the card. `LeadDetail` grows from a 79px
+ * placeholder to a ~389px record the instant it has a lead to show, and it sits
+ * ABOVE the Leads list — so the mouseenter that Playwright (or a human) delivers
+ * on the way to a click pushed the target row ~310px down the rail, and the
+ * click that followed landed on bare rail. Measured at 2560x1440 the rail's
+ * content exactly fitted (scrollHeight === clientHeight), leaving no scroll
+ * slack to absorb the shift, which is why that viewport failed while the others
+ * silently got away with it.
+ *
+ * The suite had already been bending around this: `wheelIntoView` carries a
+ * three-stall tolerance whose comment names "LeadDetail fills on hover" as a
+ * reason the rail moves under it. That is a defect being budgeted for rather
+ * than fixed.
+ *
+ * So: raw `mouse.move` then raw `mouse.click` at ONE fixed point, with no
+ * relocation in between. Playwright's own `locator.click()` re-resolves and
+ * re-scrolls before it clicks, which is precisely the compensation a human does
+ * not get.
+ */
+test.describe('pointing at a lead row does not move it', () => {
+  for (const vp of VIEWPORTS) {
+    test(`hover leaves the row under the pointer @ ${vp.name}`, async ({ page }) => {
+      // Feed frozen: this is a layout-stability question, and a roster that
+      // re-sorts mid-measurement would answer a different one.
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await page.goto('/?leads=400&fx=off&feed=off');
+      await expect(page.getByRole('heading', { name: /^Leads\b/ })).toBeVisible();
+      await page.waitForTimeout(800);
+
+      const rail = page.locator('.rail');
+      const list = page
+        .locator('.rail section.panel')
+        .filter({ has: page.getByRole('heading', { level: 2, name: /^Leads\b/ }) });
+      await wheelIntoView(page, rail, list.getByRole('heading', { level: 2 }));
+
+      const before = await list.getByRole('option').first().evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return { id: el.id, top: r.top, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+
+      // Point at it, and give the app every chance to reflow if it is going to.
+      await page.mouse.move(before.x, before.y);
+      await page.waitForTimeout(700);
+
+      const after = await page.evaluate(
+        ({ id, x, y }) => {
+          const row = document.getElementById(id);
+          const hit = document.elementFromPoint(x, y);
+          return {
+            exists: !!row,
+            top: row ? row.getBoundingClientRect().top : NaN,
+            stillUnderPointer: !!row && !!hit && (hit === row || row.contains(hit)),
+            hit: hit ? `${hit.tagName}.${String(hit.className).slice(0, 40)}` : 'nothing',
+          };
+        },
+        { id: before.id, x: before.x, y: before.y },
+      );
+
+      expect(after.exists, 'the hovered row must still exist').toBe(true);
+      expect(
+        Math.abs(after.top - before.top),
+        `hovering moved the row ${Math.round(after.top - before.top)}px @ ${vp.name}`,
+      ).toBeLessThan(4);
+      expect(
+        after.stillUnderPointer,
+        `after hovering, the pointer is over ${after.hit} instead of the row @ ${vp.name}`,
+      ).toBe(true);
+
+      // And the consequence that actually matters: a click delivered at that
+      // same point — no re-resolution, no auto-scroll — selects that lead.
+      await page.mouse.click(before.x, before.y);
+      await expect(page.locator(`[id="${before.id}"]`)).toHaveAttribute('aria-selected', 'true');
+    });
+  }
 });

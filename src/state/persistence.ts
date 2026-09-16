@@ -211,7 +211,20 @@ export interface PersistenceStatus {
   /** False when storage is missing or every operation is failing. */
   active: boolean;
   restored: boolean;
+  /** Events in the canonical in-memory log — what a write WOULD save. */
   events: number;
+  /**
+   * Events actually on disk, as of the last successful write.
+   *
+   * Distinct from `events` on purpose. Writes are throttled (`writeDelayMs`),
+   * so the tail of the log is routinely in memory and not yet durable, and a
+   * reload in that window loses it — `pagehide` starts a flush but cannot await
+   * one. Reporting only `events` under the label "persistence" overstates what
+   * would survive, which is the same overstatement D23 forbids for a
+   * half-restored history. Anything wanting to know that the session is safe
+   * must wait for this to reach `events`, not assume it.
+   */
+  persisted: number;
   version: number;
   sealed: boolean;
   lastError: string | null;
@@ -261,6 +274,8 @@ export function createPersistenceController(options: ControllerOptions = {}): Pe
   const ingest = options.ingest ?? ((e: LeadEvent) => useApsis.getState().ingest(e));
 
   let events: RecordedEvent[] = [];
+  /** Length of the log as of the last successful write. See `PersistenceStatus`. */
+  let persistedCount = 0;
   let sealed = false;
   let startedAt: number | null = null;
   let lastSeenId: string | null = null;
@@ -286,8 +301,14 @@ export function createPersistenceController(options: ControllerOptions = {}): Pe
    */
   const write = (): Promise<void> => {
     writing = writing
-      .then(() => store.save(JSON.parse(JSON.stringify(snapshot()))))
-      .then(() => {
+      .then(async () => {
+        // Count what THIS payload carried, not what the log holds once the
+        // await resolves — more events can land while the write is in flight,
+        // and claiming them as durable would be the overstatement `persisted`
+        // exists to prevent.
+        const payload = snapshot();
+        await store.save(JSON.parse(JSON.stringify(payload)));
+        persistedCount = payload.events.length;
         lastError = null;
       })
       .catch((error: unknown) => {
@@ -360,6 +381,9 @@ export function createPersistenceController(options: ControllerOptions = {}): Pe
 
       hydrate(parsed, ingest);
       events = [...parsed.events];
+      // Everything just restored came off the disk, so it is durable by
+      // definition — the log and the store agree at exactly this moment.
+      persistedCount = parsed.events.length;
       sealed = parsed.sealed;
       startedAt = parsed.savedAt - (parsed.events.at(-1)?.offsetMs ?? 0);
       restored = true;
@@ -408,6 +432,7 @@ export function createPersistenceController(options: ControllerOptions = {}): Pe
       cancelWrite?.();
       cancelWrite = null;
       events = [];
+      persistedCount = 0;
       sealed = false;
       restored = false;
       startedAt = null;
@@ -423,6 +448,7 @@ export function createPersistenceController(options: ControllerOptions = {}): Pe
         active,
         restored,
         events: events.length,
+        persisted: persistedCount,
         version: PERSIST_FORMAT_VERSION,
         sealed,
         lastError,

@@ -311,6 +311,46 @@ describe('live recording after restore', () => {
     c.stopRecording();
   });
 
+  it('reports what is DURABLE separately from what is in memory', async () => {
+    // The overstatement this forbids: `status().events` is the in-memory log,
+    // and writes are throttled, so the tail of it is routinely not on disk. A
+    // reload in that window loses it — `pagehide` starts a flush but cannot
+    // await one. Reporting only `events` under the label "persistence" claims a
+    // durability the session has not earned, and a browser test that believed
+    // it compared 50 events before a reload against the 48 that came back.
+    const store = createMemoryStore();
+    let pending: (() => void) | null = null;
+    const c = createPersistenceController({
+      store,
+      book: BOOK,
+      now: () => BASE,
+      writeDelayMs: 1500,
+      schedule: (fn) => {
+        pending = fn;
+        return () => {
+          pending = null;
+        };
+      },
+    });
+    await c.restore();
+    c.startRecording();
+
+    const { useApsis } = await import('./store');
+    const ids = useApsis.getState().order.slice(0, 5);
+    ids.forEach((leadId, i) =>
+      useApsis.getState().ingest({ id: `dur_${i}`, leadId, kind: 'opened', at: BASE, agentId: null }),
+    );
+
+    // Recorded, scheduled — and not yet on disk. Both numbers must say so.
+    expect(c.status().events).toBeGreaterThan(0);
+    expect(c.status().persisted).toBe(0);
+
+    pending!();
+    await c.flush();
+    expect(c.status().persisted).toBe(c.status().events);
+    c.stopRecording();
+  });
+
   it('seals rather than trimming when the cap is reached', async () => {
     // A sealed log is a correct PREFIX of the session; trimming the head would
     // replay into a state the session never passed through.
@@ -328,7 +368,7 @@ describe('boot lifecycle', () => {
       stopRecording: vi.fn(),
       flush: vi.fn(async () => undefined),
       clear: vi.fn(async () => undefined),
-      status: vi.fn(() => ({ store: 'memory', active: true, restored: false, events: 0, version: 1, sealed: false, lastError: null, outcome: null })),
+      status: vi.fn(() => ({ store: 'memory', active: true, restored: false, events: 0, persisted: 0, version: 1, sealed: false, lastError: null, outcome: null })),
     };
     const [a, b] = await Promise.all([
       bootSession({ controller: fake }),
@@ -350,7 +390,7 @@ describe('boot lifecycle', () => {
       stopRecording: () => undefined,
       flush: async () => undefined,
       clear: async () => undefined,
-      status: () => ({ store: 'memory', active: true, restored: false, events: 0, version: 1, sealed: false, lastError: null, outcome: null }),
+      status: () => ({ store: 'memory', active: true, restored: false, events: 0, persisted: 0, version: 1, sealed: false, lastError: null, outcome: null }),
     };
     await bootSession({ controller: fake });
     expect(calls).toEqual(['restore', 'record']);

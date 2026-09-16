@@ -17,13 +17,21 @@
 import { test, expect, type Page } from '@playwright/test';
 
 const APP = '/?leads=400&fx=off&feed=off';
-/** Deterministic top-of-list lead for seed 0x5f3a21 @ 400 leads. */
+/**
+ * The full 4,892-lead book. Needed only by the retarget test: at `?leads=400`
+ * this cluster has exactly one member, so there is no second lead to retarget
+ * onto. Both books put the same lead at the top of it.
+ */
+const FULL_BOOK = '/?fx=off&feed=off';
+/** Deterministic top-of-list lead for seed 0x5f3a21, at 400 leads and at 4,892. */
 const LEAD = 'Claire Moreau';
+/** Second member of the same cluster on the full book (score 39, ranked below LEAD). */
+const OTHER_IN_CLUSTER = 'Marcus Reyes';
 const PATH = ['West', 'Colorado', 'Colorado Springs', 'Supplemental'];
 
-async function drillToSegment(page: Page) {
+async function drillToSegment(page: Page, settleMs = 1500) {
   await expect(page.getByRole('heading', { name: /^Leads\b/ })).toBeVisible();
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(settleMs);
   for (const label of PATH) {
     await page.locator('.uv-clusters button', { hasText: label }).first().click();
     await page.waitForTimeout(700); // camera glide between levels
@@ -125,21 +133,55 @@ test.describe('§14 spatial individual focus', () => {
     );
   });
 
-  test('selecting a different lead retargets without unwinding', async ({ page }) => {
+  /**
+   * WHAT THIS TEST USED TO SAY, AND WHY IT HAD TO CHANGE.
+   *
+   * It clicked `getByRole('option').nth(1)` and asserted the card DISAPPEARED,
+   * on the reasoning that "the next list row is outside this cluster, so focus
+   * dissolves to tier 1". That was true when the roster was the global top-150
+   * by score. Progressive lead reveal made the roster drill-aware, so every row
+   * in it is now a member of the drilled cluster by construction — there is no
+   * "next row outside the cluster" left to click. At `?leads=400` this cluster
+   * holds exactly ONE lead, so `nth(1)` names nothing at all and the test hung.
+   *
+   * The property the title claims — drill survives, subject changes — is still
+   * real and is now worth MORE than it was: the correct outcome is that focus
+   * RETARGETS rather than dissolves. So the test asks for that, and picks its
+   * second lead by name. A positional `nth()` would be asserting about roster
+   * ordering, which is not what this test is for.
+   *
+   * Runs on the full book because that is where this cluster has more than one
+   * member (4: Claire Moreau, Marcus Reyes, Felix Bergman, Daniel Rivera).
+   *
+   * The dissolve-on-non-membership rule itself is not lost — it is tier 2 of the
+   * contract's state model and `spatialFocus.test.ts` pins it directly.
+   */
+  test('selecting a different lead in the cluster retargets without unwinding', async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 1000 });
-    await page.goto(APP);
-    await drillToSegment(page);
+    await page.goto(FULL_BOOK);
+    await drillToSegment(page, 2500);
     await focusLead(page);
+    await expect(page.locator('.uv-lead-card-name')).toHaveText(LEAD);
 
-    // Drill state must survive a retarget; only the subject changes. The next
-    // list row is outside this cluster, so focus dissolves to tier 1 — the
-    // card hides, the breadcrumb stays.
     const crumbs = await page.locator('.uv-crumbs li').count();
-    await page.getByRole('option').nth(1).click();
-    await page.waitForTimeout(900);
-    expect(await page.locator('.uv-crumbs li').count()).toBe(crumbs);
-    // Card only shows for members of the drilled cluster.
-    await expect(page.locator('.uv-lead-card')).toHaveCount(0);
+    await page.getByRole('option', { name: new RegExp(OTHER_IN_CLUSTER) }).first().click();
+    await page.waitForTimeout(1800);
+
+    expect(
+      await page.locator('.uv-crumbs li').count(),
+      'a retarget must not unwind the drill',
+    ).toBe(crumbs);
+    // Focus moves to the new subject rather than dissolving: still exactly one
+    // card, now naming the other lead.
+    await expect(page.locator('.uv-lead-card')).toHaveCount(1);
+    await expect(page.locator('.uv-lead-card-name')).toHaveText(OTHER_IN_CLUSTER);
+    await expect(
+      page.getByRole('option', { name: new RegExp(OTHER_IN_CLUSTER) }).first(),
+    ).toHaveAttribute('aria-selected', 'true');
+    await expect(
+      page.getByRole('option', { name: new RegExp(LEAD) }).first(),
+      'the previous subject must let go',
+    ).toHaveAttribute('aria-selected', 'false');
   });
 
   test('reduced motion: the card still appears, without animation', async ({ page }) => {

@@ -229,3 +229,47 @@ book that is the entire book, and one truthful cluster beats a fabricated
 spread.
 Forbids: adding a seeded lead field by drawing from `rand()` inside the seeding
 loop without an explicit book-schema version bump.
+
+## D25 — A control must not move because you pointed at it
+(2026-09-16) `LeadDetail` grows from a 79px placeholder to a ~389px record the
+moment it has a lead to show, and it sits ABOVE the Leads list in the rail.
+Previewing a lead hovered in that list therefore pushed the very row under the
+pointer ~310px down, and the click that followed landed on bare rail. So
+`hover()` now carries a `HoverSource`, and the detail panel previews only
+`'field'` hovers: the pointer is over the canvas there, so resizing a rail panel
+moves nothing underneath it. A `'list'` hover still lights the lead in the field
+and marks its row — it just does not reflow the rail above itself.
+Found because a test failed for the right reason. `spatial-focus.spec.ts` went
+red at 2560x1440 ONLY, and the missing card was not the defect — nothing was
+ever selected. That viewport was where the rail's content exactly fitted
+(scrollHeight === clientHeight), so there was no scroll slack to absorb the
+shift; the other three viewports were already scrolled and silently got away
+with it. The bug was in the initial commit and had been live the whole time, at
+every viewport, for every human who moved a mouse onto a row.
+The suite had been budgeting for it rather than catching it: `wheelIntoView`
+carries a three-stall tolerance whose own comment names "LeadDetail fills on
+hover" as a reason the rail moves under it.
+Nothing is lost by scoping the fallback: a row already shows name, stage and
+score, and its accessible name carries segment and location. The field is the
+surface with nothing readable on it, which is what the fallback was always for.
+Third instalment of D12's lesson, after D21: rendered is not reachable, and
+**visible must mean operable** — including one frame from now.
+Forbids: resizing any rail panel as a consequence of hovering something below
+it. Forbids asserting reachability through `locator.click()` alone, which
+re-resolves and re-scrolls before it clicks; a human gets no such compensation,
+so the regression test moves and clicks at one fixed point.
+
+## D26 — Reachability assertions name a lead, never a row index
+(2026-09-16) The roster is ordered by score and rebuilt as events land (~9/s
+under the live feed), so `getByRole('option').first()` names a different lead
+from one moment to the next. The reachability test read a name off `.first()`,
+clicked `.first()`, then asserted `.first()` was selected — three reads of a
+moving target — and failed with the row it had actually clicked sitting there
+correctly selected, because a warmer lead had taken index 0 in between.
+Identity and name are now captured in ONE evaluation and every later assertion
+addresses the row by its `id`. Positional locators are for tests about ORDER;
+using one anywhere else is asserting about a list's sort order by accident.
+Forbids: `nth()`/`first()` as an identity in any assertion that spans a click on
+live data. The same reading retired `nth(1)` in `spatial-focus.spec.ts`, which
+progressive reveal had turned into a positional claim about a one-member
+cluster.
