@@ -29,7 +29,7 @@
   "checks": {
     "typescript": "clean (app + node + e2e projects)",
     "tests": "459/459 passing (24 files) — includes 203 server tests (91 endpoint/deployment + 112 auth), all against fakes so CI needs no WorkOS account, no WorkOS key and no Anthropic key",
-    "e2e": "81/81 passing — adds 15 drill-dimension specs (default flow, dynamic paths, pixel-level score-only-movement proof, >150 terminal reachability, Escape ordering, keyboard picker, four viewports, no persistence) — adds 17 auth specs including the signed-in transitions for 401/403/503 and the POST-only sign-out control, all routes mocked — 11 llm-command + 4 host-boundary (bundle secret scan, inert config, activation path) + 8 reachability + 3 hover-stability (D25) + 3 persistence + 10 progressive-reveal + 9 spatial-focus. No known intermittents: the reachability wheel-stall flake is CLOSED (D35) — the helper now waits for the rail's scroll extent to settle instead of counting stalls, D12 detection got stricter (first tick, not third), and the previously flaky viewport ran 12 consecutive times clean.",
+    "autopilot_tests": "145/145 passing (node --test, npm run autopilot:test) — every one with fake adapters: no OpenAI credential, no Anthropic credential, no network, no live Claude invocation", "e2e": "82/82 passing — adds 15 drill-dimension specs (default flow, dynamic paths, pixel-level score-only-movement proof, >150 terminal reachability, Escape ordering, keyboard picker, four viewports, no persistence) — adds 17 auth specs including the signed-in transitions for 401/403/503 and the POST-only sign-out control, all routes mocked — 11 llm-command + 4 host-boundary (bundle secret scan, inert config, activation path) + 8 reachability + 3 hover-stability (D25) + 3 persistence + 10 progressive-reveal + 9 spatial-focus. No known intermittents: the reachability wheel-stall flake is CLOSED (D35) — the helper now waits for the rail's scroll extent to settle instead of counting stalls, D12 detection got stricter (first tick, not third), and the previously flaky viewport ran 12 consecutive times clean.",
     "lint": "exit 0 (R3F idiom warnings in LeadField.tsx only)",
     "build": "green (~1.27MB, 350KB gz)",
     "runtime_console_errors": 0,
@@ -129,11 +129,11 @@
   ],
   "blocked": ["public deployment — authentication is implemented but has never been exercised against a real WorkOS environment; run the README smoke test first"],
   "current_milestone": {
-    "name": "none — dynamic drill dimensions shipped",
-    "contract": "docs/CONTRACT_DYNAMIC_DRILL_DIMENSIONS.md",
-    "status": "IMPLEMENTED (D48-D57). Nothing is open; there are no known failing tests and no recorded intermittents.",
-    "still_pending": "live WorkOS development sign-in and the Anthropic smoke test — neither has been run, because no credentials exist in this environment. Commands are in the README.",
-    "shipped": "a per-level dimension picker: the heading that already read 'Drill into city' is now a control. DRILL_SEQUENCE is demoted to the default suggestion at each depth, so a user who never opens the picker walks today's path. effectiveNextDimension is the single decision consumed by the heading, the picker and the child list; availableDimensions offers a dimension only when it splits the cluster into two or more children, and traverses its iterable exactly once."
+    "name": "none — dynamic drill closed out, Autopilot v1 shipped",
+    "contract": "tools/autopilot/AUTOPILOT_POLICY.md",
+    "status": "Both complete. Dynamic drill dimensions implemented and closed out (D48-D57); Autopilot v1 built (D58-D61). Nothing is open; there are no known failing tests and no recorded intermittents.",
+    "still_pending": "three live verifications, none of which this environment can perform because it holds no credentials: a WorkOS development sign-in, the Anthropic smoke test, and Autopilot's first supervised run. Commands for all three are in the READMEs.",
+    "shipped": "tools/autopilot/ — a LOCAL developer CLI (not product code, not bundled, no dependency added) that runs the loop: GPT-6 Astra plans one bounded task and reviews the diff, Claude Code implements it in a dedicated git worktree, and the CONTROLLER independently runs the gates and enforces the file boundary. Four facts no review verdict can override: a failed gate, a forbidden-or-unlisted file, a moved base branch, an exhausted repair budget. Ends at owner approval and prints the merge command; it does not merge and does not push without --push-branch. 145 tests, all with fake adapters — no credential, no network, no live worker."
   },
   "performance": {
     "baseline": "docs/PERFORMANCE_BASELINE.md (2026-09-15)",

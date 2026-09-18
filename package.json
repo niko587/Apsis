@@ -11,6 +11,8 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:e2e": "vite build && playwright test",
+    "autopilot": "node tools/autopilot/cli.mjs",
+    "autopilot:test": "node --test tools/autopilot/*.test.mjs",
     "check": "tsc -b && oxlint && vitest run && npm run test:e2e",
     "preview": "vite preview"
   },

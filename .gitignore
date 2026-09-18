@@ -32,3 +32,11 @@ blob-report
 # Secrets — server-side only, never committed, never VITE_-prefixed.
 .env.local
 .env*.local
+
+# Apsis Autopilot (tools/autopilot) — local developer tooling.
+# Run records, task worktrees and the local env file. Run records are redacted
+# before they are written; this is the second line of defence, not the first.
+.apsis-autopilot
+.env.autopilot
+tools/autopilot/.env.local
+.autopilot-goal

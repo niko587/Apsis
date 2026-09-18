@@ -15,8 +15,11 @@ export default defineConfig({
     // Vitest's default include globs (`**/*.spec.ts` among them) otherwise
     // collect `e2e/reachability.spec.ts`, which is Playwright's and needs a
     // browser — `npx vitest run` would fail on a file it should never open.
-    // Two runners, two directories, no overlap: unit tests live beside their
-    // modules under src/, browser tests live in e2e/.
-    exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
+    // Three runners, three directories, no overlap: unit tests live beside
+    // their modules under src/ and server/, browser tests live in e2e/, and
+    // `tools/autopilot/*.test.mjs` are Node's own test runner (`node --test`,
+    // via `npm run autopilot:test`) — Autopilot adds no dependency, and vitest
+    // is a dependency of the product rather than of the tool.
+    exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**', 'tools/**'],
   },
 })
