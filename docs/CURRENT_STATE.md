@@ -1,7 +1,7 @@
 # Current State
 
-_Last updated: 2026-09-18 (dynamic drill closeout + Autopilot v1;
-previous phase: dynamic drill dimensions)_
+_Last updated: 2026-09-18 (Autopilot pre-live safety closeout;
+previous phase: dynamic drill closeout + Autopilot v1)_
 
 This file is the snapshot an external AI project manager should trust over any
 conversation history. It describes the repository as it actually is.
@@ -15,7 +15,7 @@ conversation history. It describes the repository as it actually is.
 | Browser suite | **82 / 82 passing** | `npm run test:e2e` |
 | Lint | exit 0 (warnings only, see below) | `npm run lint` |
 | Production build | green, ~1.27 MB bundle (350 KB gz) | `npm run build` |
-| Autopilot tests | **145 / 145 passing**, no credential, no network | `npm run autopilot:test` |
+| Autopilot tests | **203 / 203 passing**, no credential, no network | `npm run autopilot:test` |
 | Runtime console | 0 errors at load and through drill/command flows | — |
 | All five gates | the set CI runs | `npm run check` |
 
@@ -542,7 +542,48 @@ redacted twice — by credential shape and by the exact values of this process's
 own secret-shaped environment variables. `.apsis-autopilot/` and
 `.env.autopilot` are gitignored.
 
-**Verified with fakes, deliberately.** All 145 tests run with no OpenAI
+**Pre-live safety closeout (2026-09-18, D62–D67).** Independent review found six
+gaps between "the architecture is right" and "this can be pointed at a
+repository". Each was a case where the previous version did something
+reasonable-looking and wrong:
+
+- **Both child spawns used `env: process.env`** — so the Claude worker received
+  `OPENAI_API_KEY`, and any gate could read it from a test file a model had just
+  written. One sanitiser now denies by secret-shaped NAME, then by
+  credential-shaped VALUE, then by byte-identity with this process's own secrets
+  (which catches a format nobody here has heard of). `PATH`, `HOME`,
+  `SSH_AUTH_SOCK` and the build environment survive; only NAMES are recorded.
+  One narrow opt-in re-admits `ANTHROPIC_API_KEY` alone (D62).
+- **The worker's tools came from the owner's Claude settings** — a reasonable
+  `Bash(git *)` allowance for interactive work was silently granted to an
+  unattended worker. Now pinned: `Read, Edit, Write, Glob, Grep`, with Bash,
+  WebFetch, WebSearch and Task denied, project settings only, and no MCP
+  servers. **The worker has no shell in v1** — it reasons from the code and
+  learns what failed from the controller's real gate output on a repair turn
+  (D63).
+- **`assertNoSecrets(redact(packet))`** inspected text the secret had already
+  been removed from, so the "abort rather than scrub" invariant could never
+  fire. Now: build RAW → assert → redact → send (D64).
+- **New files reached the reviewer as `(new file, contents not inlined)`** — a
+  task whose whole implementation was one new module was "reviewed" unread. New
+  files are now inlined in full; binary and oversized files are named and
+  escalate rather than being summarised into acceptability (D65).
+- **Gates run code, and code writes files**, so the boundary checked was not the
+  boundary committed. Checked three times now — after the worker, after the
+  gates, and immediately before `git add -A` — plus a set comparison proving the
+  committed surface is the one the reviewer read (D66).
+- **Worker spend was unbounded.** A real `run` now requires
+  `APSIS_AUTOPILOT_WORKER_BUDGET_USD`, with no default: the loop count bounds
+  how many turns happen, not what one costs (D66).
+
+**And the docs now say what v1 is not.** It constrains git, the file surface,
+secrets and the worker's tools. It does **not** sandbox execution — the gates run
+`npm test` and `npm run build` as the owner's user. v1 is for **supervised** use
+on a trusted repository; unattended autonomy needs a real execution sandbox
+first, and that is separate work (D67). The Autopilot suite now runs in CI,
+before the browser stage.
+
+**Verified with fakes, deliberately.** All 203 tests run with no OpenAI
 credential, no Anthropic credential, no network and no live Claude invocation.
 **No live OpenAI call has been made and no nested Claude coding run has been
 started** — there is no key in this environment, and the tool has not been

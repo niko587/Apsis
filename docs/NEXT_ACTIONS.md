@@ -1,6 +1,6 @@
 # Next Actions
 
-_Last updated: 2026-09-18 (dynamic drill closed out; Autopilot v1 shipped).
+_Last updated: 2026-09-18 (Autopilot pre-live safety closeout).
 Ordered. Each item: what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
@@ -387,12 +387,22 @@ JSON-schema validator, argument parser and process runner are Node 22 built-ins
 plus a few hundred lines — a deliberate trade, because this tool holds an API
 key.
 
-**145 tests, all with fakes**: no OpenAI credential, no Anthropic credential, no
-network, no live Claude invocation. A test suite that costs money is one that
-stops being run.
+**Pre-live safety closeout (D62–D67).** Six gaps found by independent review,
+all fixed: neither the worker nor any gate inherits the owner's credentials; the
+worker's tool surface is pinned and has **no Bash**; `assertNoSecrets` now runs
+on raw text so it can actually fire; new files are inlined in full for review and
+unreviewable ones escalate; the boundary is checked three times because gates run
+code; and a real run requires an explicit spend ceiling. The docs now state
+plainly that v1 is **supervised**, not sandboxed.
+
+**203 tests, all with fakes**: no OpenAI credential, no Anthropic credential, no
+network, no live Claude invocation — and they run in CI, before the browser
+stage. A test suite that costs money is one that stops being run.
 
 **Still to do — and it is the owner's step, not a code step:**
-1. `export OPENAI_API_KEY=...` locally (never in the repo, never in a chat).
+1. `export OPENAI_API_KEY=...` and `export APSIS_AUTOPILOT_WORKER_BUDGET_USD=...`
+   locally (never in the repo, never in a chat). The budget has no default and a
+   real run refuses to start without it.
 2. `npm run autopilot -- doctor --check-openai`
 3. `npm run autopilot -- plan --goal "finish prototype polish"` — read the spec.
 4. `npm run autopilot -- dry-run --goal "..."` — read what it would do.

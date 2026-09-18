@@ -16,6 +16,7 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import fs from 'node:fs';
 import path from 'node:path';
 import { CODES, fail } from './errors.mjs';
 import { redact } from './redaction.mjs';
@@ -81,22 +82,90 @@ export const makeGit = (deps = {}) => {
       return [...new Set(all)].sort();
     },
 
-    /** Diff text for the review packet, bounded so one huge file cannot blow the request. */
-    async diffText(cwd, baseSha, { maxBytes = 200_000 } = {}) {
-      const text = await run(['diff', baseSha, '--'], cwd);
+    /**
+     * The diff the reviewer actually reads.
+     *
+     * THE DEFECT THIS EXISTS FOR: new files were rendered as
+     * `(new file, contents not inlined)`. A task whose entire implementation is
+     * one new module therefore produced a review in which Astra accepted code
+     * it had never seen — and "reviewed" is the word the run record used. An
+     * unread file is not a reviewed file, and the packet must not imply
+     * otherwise.
+     *
+     * So untracked files are inlined as new-file hunks, read from disk. Nothing
+     * is staged to achieve it: `git add` to produce a diff would mutate the
+     * index of a tree the controller has not yet accepted.
+     *
+     * Two categories cannot be reviewed as text and are NOT quietly summarised:
+     * binary files, and files too large for the byte budget. They come back in
+     * `unreviewable`, and the controller escalates rather than asking anyone to
+     * bless bytes nobody read (D65).
+     *
+     * @returns {{text: string, unreviewable: {file: string, reason: string, bytes: number}[], truncated: boolean}}
+     */
+    async reviewDiff(cwd, baseSha, { maxBytes = 200_000, maxFileBytes = 64_000, fsImpl = fs } = {}) {
+      const tracked = await run(['diff', baseSha, '--'], cwd);
       const untracked = (await one(['ls-files', '--others', '--exclude-standard'], cwd))
         .split('\n')
         .map((s) => s.trim())
-        .filter(Boolean);
+        .filter(Boolean)
+        .sort();
 
+      const unreviewable = [];
+      let truncated = false;
+      let budget = maxBytes - tracked.length;
       let extra = '';
+
       for (const file of untracked) {
-        extra += `\n--- /dev/null\n+++ b/${file}\n(new file, contents not inlined)\n`;
+        const full = path.resolve(cwd, file);
+        let stat;
+        try {
+          stat = fsImpl.statSync(full);
+        } catch {
+          unreviewable.push({ file, reason: 'unreadable', bytes: 0 });
+          continue;
+        }
+        if (!stat.isFile()) continue;
+
+        if (stat.size > maxFileBytes) {
+          unreviewable.push({ file, reason: 'too-large-to-review', bytes: stat.size });
+          continue;
+        }
+
+        const bytes = fsImpl.readFileSync(full);
+        if (isBinary(bytes)) {
+          unreviewable.push({ file, reason: 'binary', bytes: stat.size });
+          continue;
+        }
+
+        const body = bytes.toString('utf8');
+        const hunk =
+          `\n--- /dev/null\n+++ b/${file}\n@@ -0,0 +1,${body === '' ? 0 : body.split('\n').length} @@\n` +
+          `${body.split('\n').map((line) => `+${line}`).join('\n')}\n`;
+
+        if (hunk.length > budget) {
+          // The budget ran out. Say so about THIS file rather than cutting the
+          // packet mid-hunk and leaving a half-read module looking complete.
+          unreviewable.push({ file, reason: 'exceeded-diff-budget', bytes: stat.size });
+          truncated = true;
+          continue;
+        }
+        extra += hunk;
+        budget -= hunk.length;
       }
-      const combined = text + extra;
-      return combined.length > maxBytes
-        ? `${combined.slice(0, maxBytes)}\n…diff truncated at ${maxBytes} bytes…`
-        : combined;
+
+      let text = tracked + extra;
+      if (text.length > maxBytes) {
+        text = `${text.slice(0, maxBytes)}\n…diff truncated at ${maxBytes} bytes…`;
+        truncated = true;
+      }
+      if (unreviewable.length > 0) {
+        text +=
+          `\n\n!!! ${unreviewable.length} file(s) in this change were NOT included above and have NOT been reviewed:\n` +
+          unreviewable.map((u) => `  ${u.file} — ${u.reason} (${u.bytes} bytes)`).join('\n') +
+          '\n';
+      }
+      return { text, unreviewable, truncated };
     },
 
     /** A new branch at an exact base commit, checked out in its own directory. */
@@ -144,5 +213,18 @@ export const makeGit = (deps = {}) => {
     },
   };
 };
+
+/**
+ * Binary detection, the pragmatic way git itself uses: a NUL byte in the first
+ * few KB. Cheap, and wrong only for text files that contain NULs — which are
+ * not files a reviewer should be reading as text either.
+ */
+export function isBinary(buffer) {
+  const window = buffer.subarray(0, Math.min(buffer.length, 8000));
+  if (window.includes(0)) return true;
+  // Invalid UTF-8 round-trips to replacement characters.
+  const text = window.toString('utf8');
+  return text.includes('\uFFFD');
+}
 
 export const defaultGit = makeGit();

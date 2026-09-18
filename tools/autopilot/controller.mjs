@@ -84,6 +84,22 @@ export async function runAutopilot(options, injected = {}) {
     );
   }
 
+  /**
+   * A real run spends money in a process nobody is watching, so the ceiling is
+   * the owner's to set and there is no default (D66).
+   *
+   * Inventing a number would be pretending to know how much a task of unknown
+   * size costs on the owner's plan. Requiring one costs a single environment
+   * variable and makes the ceiling a decision rather than a discovery. `plan`
+   * and `dry-run` never invoke a worker, so they never ask.
+   */
+  if (mode === 'run' && (config.workerBudgetUsd === null || config.workerBudgetUsd === undefined)) {
+    fail(
+      CODES.NO_BUDGET,
+      'set APSIS_AUTOPILOT_WORKER_BUDGET_USD before a real run — it becomes `claude --max-budget-usd` and is the only hard ceiling on worker spend. Pick a number you would be relaxed about losing; see tools/autopilot/README.md.',
+    );
+  }
+
   const baseBranch = await git.currentBranch(root);
   const baseSha = await git.headSha(root);
   const recentLog = await git.recentLog(20, root);
@@ -179,15 +195,16 @@ export async function runAutopilot(options, injected = {}) {
               gateResults: lastGateResults,
               boundary: lastBoundary,
               review: lastReview,
-              diff: await git.diffText(worktreePath, baseSha),
+              diff: (await git.reviewDiff(worktreePath, baseSha)).text,
               resumed,
             });
 
+      // Assert on RAW, then redact (D64).
       assertNoSecrets(prompt);
       store.step('worker-turn-start', { iteration, resumed, model: taskSpec.workerModel });
 
       const worker = await deps.runWorker({
-        prompt,
+        prompt: redact(prompt),
         cwd: worktreePath,
         bin: config.claudeBin,
         model: taskSpec.workerModel,
@@ -205,29 +222,53 @@ export async function runAutopilot(options, injected = {}) {
         sessionId,
         durationMs: worker.durationMs,
         costUsd: worker.costUsd ?? null,
+        // NAMES only — proof the sanitisation ran, with no value anywhere near
+        // the record (D62).
+        removedEnvCount: worker.removedEnv?.length ?? null,
       });
 
-      /* boundary BEFORE gates: a run that edited a forbidden file is over, and
-         spending forty minutes of e2e to discover that would be theatre. */
-      changedFiles = await git.changedFiles(worktreePath, baseSha);
-      lastBoundary = enforceBoundaries({
-        changed: changedFiles,
-        allowedFiles: taskSpec.allowedFiles,
-        forbiddenFiles: taskSpec.forbiddenFiles,
-      });
-      store.step('boundary-checked', {
-        ok: lastBoundary.ok,
-        code: lastBoundary.code,
-        changed: changedFiles.length,
-        violations: lastBoundary.violations,
-        unlisted: lastBoundary.unlisted,
-      });
+      /* BOUNDARY #1 — before gates. A run that edited a forbidden file is over,
+         and spending forty minutes of e2e to discover that would be theatre. */
+      const checkBoundary = async (label) => {
+        changedFiles = await git.changedFiles(worktreePath, baseSha);
+        const verdict = enforceBoundaries({
+          changed: changedFiles,
+          allowedFiles: taskSpec.allowedFiles,
+          forbiddenFiles: taskSpec.forbiddenFiles,
+        });
+        store.step('boundary-checked', {
+          when: label,
+          iteration,
+          ok: verdict.ok,
+          code: verdict.code,
+          changed: changedFiles.length,
+          violations: verdict.violations,
+          unlisted: verdict.unlisted,
+        });
+        return verdict;
+      };
+
+      lastBoundary = await checkBoundary('after-worker');
 
       if (lastBoundary.ok) {
         lastGateResults = await deps.runGates(taskSpec.requiredGates, {
           cwd: worktreePath,
           timeoutMs: config.gateTimeoutMs,
         });
+
+        /**
+         * BOUNDARY #2 — after gates, and this one is not belt-and-braces.
+         *
+         * A gate RUNS repository code: `npm run build` writes dist/, a test can
+         * write a fixture, a tool can drop a cache. So the surface at the moment
+         * of the first check is not the surface that exists at the moment of
+         * commit, and `git add -A` would sweep up whatever appeared in between —
+         * a file that never received a boundary verdict from anyone.
+         *
+         * Re-checking here closes the window between the two, and the pre-commit
+         * check below closes the window between review and commit.
+         */
+        lastBoundary = await checkBoundary('after-gates');
       } else {
         // Gates are not run on an out-of-bounds diff; the result must still have
         // the shape the reviewer packet and repair prompt expect.
@@ -236,46 +277,99 @@ export async function runAutopilot(options, injected = {}) {
       store.writeJson(`gates-${iteration}.json`, lastGateResults);
       store.step('gates-run', { iteration, ok: lastGateResults.ok, failed: lastGateResults.failed });
 
-      /* REVIEW — one call per iteration (B13). */
-      const reviewPacket = buildReviewPacket({
-        taskSpec,
-        baseSha,
-        branch,
-        changedFiles,
-        diff: await git.diffText(worktreePath, baseSha),
-        gateResults: lastGateResults,
-        boundary: lastBoundary,
-        workerSummary: previousSummary,
+      /**
+       * The diff as the reviewer will see it — new files inlined in full, and
+       * anything that could not be read as text named rather than glossed (D65).
+       */
+      const reviewDiff = await git.reviewDiff(worktreePath, baseSha);
+      store.step('diff-built', {
         iteration,
+        bytes: reviewDiff.text.length,
+        truncated: reviewDiff.truncated,
+        unreviewable: reviewDiff.unreviewable.map((u) => `${u.file}:${u.reason}`),
       });
-      assertNoSecrets(reviewPacket);
 
-      const { review } = await deps.reviewWork({
-        packet: reviewPacket,
-        apiKey: config.readApiKey(),
-        model: config.openaiModel,
-        reasoningEffort: config.reasoningEffort,
-      });
-      lastReview = review;
-      store.writeJson(`review-${iteration}.json`, review);
-      store.step('reviewed', { iteration, verdict: review.verdict, findings: review.findings.length });
+      /**
+       * REVIEW — one call per iteration (B13), and only for a diff that is
+       * inside the declared surface.
+       *
+       * An out-of-bounds diff is already decided. Asking a reviewer about it
+       * would spend a call to obtain an opinion the controller must ignore, and
+       * would put the reviewer in the position of appearing to bless something
+       * it cannot.
+       */
+      let review = null;
+      if (lastBoundary.ok) {
+        const rawPacket = buildReviewPacket({
+          taskSpec,
+          baseSha,
+          branch,
+          changedFiles,
+          diff: reviewDiff.text,
+          unreviewable: reviewDiff.unreviewable,
+          gateResults: lastGateResults,
+          boundary: lastBoundary,
+          workerSummary: previousSummary,
+          iteration,
+        });
+        // Assert on RAW, then redact (D64) — the same ordering as the packet
+        // builder, for the same reason.
+        assertNoSecrets(rawPacket);
+
+        ({ review } = await deps.reviewWork({
+          packet: redact(rawPacket),
+          apiKey: config.readApiKey(),
+          model: config.openaiModel,
+          reasoningEffort: config.reasoningEffort,
+        }));
+        lastReview = review;
+        store.writeJson(`review-${iteration}.json`, review);
+        store.step('reviewed', { iteration, verdict: review.verdict, findings: review.findings.length });
+      } else {
+        lastReview = null;
+        store.step('review-skipped', { iteration, because: lastBoundary.code });
+      }
 
       /* DECIDE — controller facts first, reviewer opinion second. */
       const blocked =
         (!lastBoundary.ok && lastBoundary.code) ||
         (!lastGateResults.ok && CODES.GATE_FAILED) ||
+        (reviewDiff.unreviewable.length > 0 && CODES.UNREVIEWABLE) ||
         null;
 
-      if (!blocked && review.verdict === 'accept') break;
+      if (!blocked && review?.verdict === 'accept') break;
 
-      if (blocked && review.verdict === 'accept') {
+      if (blocked && review?.verdict === 'accept') {
         // Recorded explicitly. A reviewer that accepts a failed run is a signal
         // about the reviewer, and it should be visible in the run record rather
         // than silently discarded.
         store.step('reviewer-overruled', { blocked, verdict: review.verdict });
       }
 
-      if (review.verdict === 'escalate') {
+      /**
+       * Files nobody could read do not get a second opinion. Escalating here
+       * rather than repairing is deliberate: a binary asset or a 200KB generated
+       * file is a decision for the owner, not something a worker should try
+       * again differently.
+       */
+      if (reviewDiff.unreviewable.length > 0) {
+        return finishEscalated(store, {
+          reason: `${reviewDiff.unreviewable.length} file(s) could not be reviewed as text: ${reviewDiff.unreviewable
+            .map((u) => `${u.file} (${u.reason})`)
+            .join(', ')}`,
+          code: CODES.UNREVIEWABLE,
+          review: lastReview,
+          branch,
+          worktreeRel,
+          baseSha,
+          taskSpec,
+          changedFiles,
+          gateResults: lastGateResults,
+          boundary: lastBoundary,
+        });
+      }
+
+      if (review?.verdict === 'escalate') {
         return finishEscalated(store, {
           reason: 'reviewer escalated',
           review,
@@ -328,13 +422,77 @@ export async function runAutopilot(options, injected = {}) {
       });
     }
 
-    /* 10 — COMMIT, AND STOP -------------------------------------------- */
+    /* 10 — BOUNDARY, ONE LAST TIME, IMMEDIATELY BEFORE COMMIT ---------- */
+
+    /**
+     * `commitAll` runs `git add -A`. Whatever the working tree holds at that
+     * instant is what enters the branch — so the surface that was approved and
+     * the surface that gets committed must be shown to be the same surface, at
+     * the last possible moment, by the controller.
+     *
+     * Two separate questions, and both matter:
+     *   - is everything still inside the declared boundary? (a new file could
+     *     have appeared since the review)
+     *   - is it the SAME set the reviewer actually read? (a file that vanished,
+     *     or one that appeared, means the review describes something else)
+     */
+    const finalChanged = await git.changedFiles(worktreePath, baseSha);
+    const finalBoundary = enforceBoundaries({
+      changed: finalChanged,
+      allowedFiles: taskSpec.allowedFiles,
+      forbiddenFiles: taskSpec.forbiddenFiles,
+    });
+    store.step('boundary-checked', {
+      when: 'pre-commit',
+      ok: finalBoundary.ok,
+      code: finalBoundary.code,
+      changed: finalChanged.length,
+      violations: finalBoundary.violations,
+      unlisted: finalBoundary.unlisted,
+    });
+
+    if (!finalBoundary.ok) {
+      return finishEscalated(store, {
+        reason: `the changed surface left the declared boundary between review and commit (${finalBoundary.code}): ${[
+          ...finalBoundary.violations,
+          ...finalBoundary.unlisted,
+          ...finalBoundary.unsafe,
+        ].join(', ')}`,
+        code: finalBoundary.code,
+        review: lastReview,
+        branch,
+        worktreeRel,
+        baseSha,
+        taskSpec,
+        changedFiles: finalChanged,
+        gateResults: lastGateResults,
+        boundary: finalBoundary,
+      });
+    }
+
+    const drift = diffSets(changedFiles, finalChanged);
+    if (drift.added.length > 0 || drift.removed.length > 0) {
+      return finishEscalated(store, {
+        reason: `the changed surface is not the one that was reviewed — appeared: ${drift.added.join(', ') || 'none'}; disappeared: ${drift.removed.join(', ') || 'none'}`,
+        code: CODES.SURFACE_DRIFT,
+        review: lastReview,
+        branch,
+        worktreeRel,
+        baseSha,
+        taskSpec,
+        changedFiles: finalChanged,
+        gateResults: lastGateResults,
+        boundary: finalBoundary,
+      });
+    }
+
+    /* 11 — COMMIT, AND STOP -------------------------------------------- */
 
     const headSha = await git.commitAll({
       cwd: worktreePath,
       message: commitMessage(taskSpec, lastReview),
     });
-    store.step('committed', { headSha });
+    store.step('committed', { headSha, files: finalChanged.length });
 
     let pushed = null;
     if (pushBranch) {
@@ -401,6 +559,16 @@ function finishEscalated(store, detail) {
   };
 }
 
+/** Set difference both ways, for the surface-drift check. */
+const diffSets = (before, after) => {
+  const a = new Set(before);
+  const b = new Set(after);
+  return {
+    added: after.filter((f) => !a.has(f)),
+    removed: before.filter((f) => !b.has(f)),
+  };
+};
+
 const commitMessage = (taskSpec, review) =>
   [
     `${taskSpec.title}`,
@@ -414,4 +582,4 @@ const commitMessage = (taskSpec, review) =>
     .join('\n')
     .trim();
 
-export const __test = { commitMessage, ALWAYS_FORBIDDEN };
+export const __test = { commitMessage, diffSets, ALWAYS_FORBIDDEN };

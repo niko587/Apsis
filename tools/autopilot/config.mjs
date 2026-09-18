@@ -26,6 +26,11 @@ export const DEFAULTS = Object.freeze({
   maxRepairCycles: 3,
   maxPlanningCallsPerTask: 1,
   maxReviewCallsPerIteration: 1,
+  /**
+   * No default, on purpose (D66). A real run must be given a ceiling by the
+   * owner; inventing one would be pretending to know what a task of unknown
+   * size costs on their plan. `plan` and `dry-run` never need it.
+   */
   workerBudgetUsd: null,
   gateTimeoutMs: 30 * 60_000,
   workerTimeoutMs: 60 * 60_000,

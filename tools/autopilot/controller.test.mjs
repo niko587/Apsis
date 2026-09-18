@@ -34,6 +34,7 @@ function fakeGit(over = {}) {
     commits: [],
     pushes: [],
     baseNow: null,
+    unreviewable: [],
     ...over,
   };
   return {
@@ -47,7 +48,11 @@ function fakeGit(over = {}) {
     recentLog: async () => 'abc1234 a commit',
     version: async () => 'git version 2.50.0',
     changedFiles: async () => state.changed,
-    diffText: async () => 'diff --git a/x b/x\n+one line\n',
+    reviewDiff: async () => ({
+      text: state.diffText ?? 'diff --git a/x b/x\n+one line\n',
+      unreviewable: state.unreviewable ?? [],
+      truncated: false,
+    }),
     addWorktree: async ({ root, dir, branch, baseSha }) => {
       state.worktrees.push({ dir, branch, baseSha });
       const full = path.join(root, dir);
@@ -151,7 +156,7 @@ function harness(over = {}) {
     claudeModel: 'claude-opus-5',
     claudeBin: 'claude',
     maxRepairCycles: 3,
-    workerBudgetUsd: null,
+    workerBudgetUsd: 5,
     gateTimeoutMs: 1000,
     workerTimeoutMs: 1000,
     hasApiKey: true,

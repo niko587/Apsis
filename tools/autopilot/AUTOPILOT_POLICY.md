@@ -58,6 +58,47 @@ decides, and no verdict overrides it:
 | A forbidden or unlisted file changed | Automatic rejection; gates are not even run. |
 | The base branch moved during the run | Escalate — the gate results describe a merge that no longer exists. |
 | The repair budget is exhausted | Stop. Do not keep spending. |
+| A file could not be read as text (binary, or too large) | Escalate — nobody reviewed it, so nobody may bless it. |
+| The committed surface differs from the reviewed surface | Escalate — the review describes something else. |
+
+## The trust boundary, stated honestly
+
+**This is not an OS sandbox, and v1 must not be described as one.**
+
+What IS structurally constrained:
+
+- **git and `main`.** The worker never commits, pushes, or touches the base
+  branch; the controller's git surface has no force push, no reset, no rebase,
+  no branch delete and no merge. Work happens in a dedicated worktree.
+- **The file surface.** The controller compares the real diff to the declared
+  boundary three times — after the worker, after the gates, and immediately
+  before the commit — so a file that appears at any point in between still gets
+  a verdict.
+- **Secrets.** Neither the Claude worker nor any gate subprocess inherits the
+  owner's credentials. `OPENAI_API_KEY` in particular is the controller's alone
+  and never reaches the other provider's process.
+- **The worker's tools.** Read, Edit, Write, Glob and Grep. **No Bash in v1**,
+  no MCP servers, and the owner's personal Claude settings are not loaded.
+
+What is NOT constrained, and cannot be by this design:
+
+- **The gates execute repository code.** `npm test` and `npm run build` run a
+  test file and a build config that a model may have just written. That code
+  runs as the owner's user, on the owner's machine, with filesystem and network
+  access. Stripping credentials from its environment reduces what it can steal;
+  it does not stop it from running.
+- **The worker can write any file inside its worktree.** The boundary check
+  catches it afterwards and refuses the task — which is detection, not
+  prevention. An out-of-bounds file is never committed, but it was written.
+
+So: **v1 is for supervised use on this repository, which the owner trusts.**
+Watch the first runs. Read the diffs. It is a loop that does bounded work behind
+boundaries a human wrote — not a container, and not a system for running code
+you have reason to distrust.
+
+**Level-3 unattended autonomy — leaving it running without watching — requires a
+stronger execution sandbox or an isolated runner first.** That is a separate
+piece of work and is deliberately not attempted here.
 
 ## What Autopilot never does
 
@@ -68,6 +109,9 @@ decides, and no verdict overrides it:
 - execute a command that a model produced
 - send a secret to any model
 - add a dependency to the root project
+- hand the Claude worker the owner's OpenAI key, or any other credential
+- give the worker a shell
+- start a real run without an explicit spend ceiling
 - deploy
 
 ## Scope of automation, stated plainly

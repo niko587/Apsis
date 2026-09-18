@@ -12,7 +12,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { claudeAvailable, supportsResume } from './claude.mjs';
+import { claudeAvailable, supportsResume, WORKER_TOOLS, WORKER_DENIED_TOOLS } from './claude.mjs';
+import { ANTHROPIC_OPT_IN } from './child-env.mjs';
 import { checkAccess } from './openai.mjs';
 import { defaultGit } from './git.mjs';
 import { RUNTIME_DIR } from './run-state.mjs';
@@ -115,6 +116,28 @@ export async function doctor({
   }
 
   checks.push(ok('worker model', config.claudeModel));
+  checks.push(
+    ok(
+      'worker tools',
+      `${WORKER_TOOLS.join(', ')} — ${WORKER_DENIED_TOOLS.join('/')} denied, project settings only (D63)`,
+    ),
+  );
+  checks.push(
+    config.workerBudgetUsd === null
+      ? warn(
+          'worker budget',
+          'APSIS_AUTOPILOT_WORKER_BUDGET_USD not set — `plan` and `dry-run` work; a real `run` will refuse to start',
+        )
+      : ok('worker budget', `$${config.workerBudgetUsd} per worker turn (claude --max-budget-usd)`),
+  );
+  if ((process.env[ANTHROPIC_OPT_IN] ?? '') === '1') {
+    checks.push(
+      warn(
+        'anthropic key',
+        `${ANTHROPIC_OPT_IN}=1 — ANTHROPIC_API_KEY will be passed to the worker. Every other secret is still stripped.`,
+      ),
+    );
+  }
   checks.push(ok('planner model', `${config.openaiModel} (reasoning effort: ${config.reasoningEffort})`));
 
   checks.push(

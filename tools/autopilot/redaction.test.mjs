@@ -16,7 +16,10 @@ import { validSpec } from './schemas.test.mjs';
 const FAKE_OPENAI = 'sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const FAKE_ANTHROPIC = 'sk-ant-api03-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
 const FAKE_GITHUB = 'ghp_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
-const FAKE_WORKOS = 'sk_test_DDDDDDDDDDDDDDDDDDDDDDDDDDDD';
+// Shape-compatible with the WorkOS pattern the redactor matches, but padded so
+// it cannot be mistaken by a secret scanner for a real vendor key (the same
+// lesson push protection taught this repository once already).
+const FAKE_WORKOS = 'sk_test_ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ';
 const FAKE_ODD = 'zz-this-format-nobody-knows-9182736455';
 
 test('9. credential-shaped strings are redacted by shape alone', () => {
@@ -87,8 +90,23 @@ test('9. the describable config never contains the key', () => {
   assert.ok(!JSON.stringify(config).includes(FAKE_OPENAI));
 });
 
-test('10. no secret value enters a generated worker prompt', () => {
+test('10. an ordinary worker prompt carries no secret and passes the check', () => {
   const env = { OPENAI_API_KEY: FAKE_OPENAI, ANTHROPIC_API_KEY: FAKE_ANTHROPIC };
+  const prompt = buildWorkerPrompt({
+    taskSpec: validSpec(),
+    baseSha: 'abc123',
+    branch: 'autopilot/task-0001-x',
+    worktreePath: '/tmp/wt',
+  });
+  assert.ok(!prompt.includes(FAKE_OPENAI));
+  assert.doesNotThrow(() => assertNoSecrets(prompt, { env }));
+});
+
+test('10. ORDER: a secret reaching a worker prompt ABORTS — it is not scrubbed and sent', () => {
+  // The builders now return RAW text precisely so this check can see the secret
+  // (D64). Redacting inside the builder would have made the assertion inspect
+  // text the secret had already been removed from, so it could never fire.
+  const env = { OPENAI_API_KEY: FAKE_OPENAI };
   const prompt = buildWorkerPrompt({
     taskSpec: validSpec(),
     baseSha: 'abc123',
@@ -96,8 +114,8 @@ test('10. no secret value enters a generated worker prompt', () => {
     worktreePath: '/tmp/wt',
     projectNotes: `a note that wrongly quotes ${FAKE_OPENAI}`,
   });
-  assert.ok(!prompt.includes(FAKE_OPENAI));
-  assert.doesNotThrow(() => assertNoSecrets(prompt, { env }));
+  assert.ok(prompt.includes(FAKE_OPENAI), 'the builder must not pre-scrub, or the check below is theatre');
+  assert.throws(() => assertNoSecrets(prompt, { env }), /refusing to send 1 secret value/);
 });
 
 test('10. assertNoSecrets ABORTS rather than scrubbing, when a secret reaches a prompt', () => {

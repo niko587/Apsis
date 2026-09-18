@@ -23,18 +23,26 @@ browser, and the product cannot tell it is here.
    validated again locally.
 3. **Isolate.** A new branch and a new git worktree under `.apsis-autopilot/`.
    Your main checkout is never the working surface.
-4. **Implement.** Claude Code runs non-interactively in that worktree. It does
-   not commit, branch, or push — the controller owns git.
-5. **Boundary check.** The controller compares the *actual* diff against the
+4. **Implement.** Claude Code runs non-interactively in that worktree, with
+   Read/Edit/Write/Glob/Grep and **no Bash**. It does not commit, branch, or
+   push — the controller owns git.
+5. **Boundary check #1.** The controller compares the *actual* diff against the
    task's allowed and forbidden files. A violation ends the task; no reviewer is
    consulted.
 6. **Gates.** The controller runs typecheck / lint / unit / build / e2e itself.
    "Claude says the tests pass" is a sentence, not evidence.
-7. **Review.** GPT-6 Astra reads a diff that is already gated and already
-   bounded, looking for what gates cannot see — a weakened test, an assertion
-   that passes for the wrong reason, a broken invariant.
-8. **Repair,** up to 3 times, then stop.
-9. **Stop at approval.** It prints the merge command. It does not run it.
+7. **Boundary check #2.** Gates *run code*, and code writes files. The surface
+   is re-checked after them, so a file that appeared during a build cannot ride
+   into the commit unexamined.
+8. **Review.** GPT-6 Astra reads a diff that is already gated and already
+   bounded — with **every new file inlined in full** — looking for what gates
+   cannot see: a weakened test, an assertion that passes for the wrong reason, a
+   broken invariant. Anything that could not be read as text (binary, oversized)
+   escalates rather than being described as reviewed.
+9. **Repair,** up to 3 times, then stop.
+10. **Boundary check #3, immediately before the commit,** plus a check that the
+    surface is the same one the reviewer read.
+11. **Stop at approval.** It prints the merge command. It does not run it.
 
 ## Setup
 
@@ -51,7 +59,16 @@ claude --version
 
 ```sh
 export OPENAI_API_KEY=...
+export APSIS_AUTOPILOT_WORKER_BUDGET_USD=5   # required for a real run
 ```
+
+**The budget has no default and a real `run` refuses to start without it.** It
+becomes `claude --max-budget-usd` and is the only hard ceiling on worker spend —
+the loop count bounds how many turns happen, not what a turn costs. There is no
+invented default because nobody here knows what a task of unknown size costs on
+your plan: pick a number you would be relaxed about losing on a run that goes
+wrong, watch a few runs, then raise it deliberately. `plan` and `dry-run` never
+need it, because they never invoke a worker.
 
 Or put it in `.env.autopilot` at the repository root — that file is gitignored.
 Copy `tools/autopilot/.env.example` for the variable names.
@@ -123,7 +140,8 @@ All of it is environment, all of it is local, none of it is `VITE_`-prefixed.
 | `OPENAI_AUTOPILOT_REASONING_EFFORT` | `high` | `low` \| `medium` \| `high` |
 | `APSIS_AUTOPILOT_CLAUDE_MODEL` | `claude-opus-5` | default worker; a task may pick `claude-fable-5` |
 | `APSIS_AUTOPILOT_CLAUDE_BIN` | `claude` | path to the CLI |
-| `APSIS_AUTOPILOT_WORKER_BUDGET_USD` | unset | passed to `claude --max-budget-usd` |
+| `APSIS_AUTOPILOT_WORKER_BUDGET_USD` | **none — required for `run`** | `claude --max-budget-usd` |
+| `APSIS_AUTOPILOT_PASS_ANTHROPIC_KEY` | unset | see "the worker's environment" below |
 | `APSIS_AUTOPILOT_MAX_REPAIRS` | `3` | clamped to 3 |
 
 ## Limits, on purpose
@@ -132,6 +150,53 @@ Per invocation: **1 task**, **1 planning call**, **3 repair cycles**, **1 review
 call per iteration**. There is no infinite loop, and `--max-tasks` above 1 is
 deliberately not wired up yet — the architecture supports it, and raising it
 should follow from trusting the tool, not precede it.
+
+## The worker's environment, and its tools
+
+**The worker does not get your credentials.** Both child processes — the Claude
+worker and every gate — are spawned with a sanitized environment: every
+secret-shaped variable name is removed, then every credential-shaped *value*,
+then anything byte-identical to one of this process's own secrets. `PATH`,
+`HOME`, `SSH_AUTH_SOCK` and the ordinary build environment survive, because a
+gate still has to run.
+
+`OPENAI_API_KEY` is the controller's and the controller's alone. Handing one
+provider's key to the other provider's process would dissolve the separation
+this whole tool is built around, and it was happening purely by inheritance.
+
+v1 assumes Claude Code is authenticated the normal way — the stored login you
+already use. If your installation instead needs `ANTHROPIC_API_KEY` from the
+environment, set `APSIS_AUTOPILOT_PASS_ANTHROPIC_KEY=1`; that re-admits **that
+one variable and nothing else**.
+
+**The worker has no shell.** Its tools are `Read, Edit, Write, Glob, Grep`;
+`Bash`, `WebFetch`, `WebSearch` and `Task` are denied, MCP servers are disabled,
+and only *project* settings are loaded — so a `Bash(git *)` allowance in your
+personal Claude settings grants the worker nothing.
+
+**The limitation that comes with that:** the worker cannot run a single test in
+a tight loop while it works. It has to reason from the code, and it learns what
+failed only on a repair turn, from the controller's real gate output. That costs
+worker efficiency. It buys the ability to say plainly that the coding agent
+cannot execute arbitrary commands — worth more before a first unattended run.
+
+## What this is NOT: an OS sandbox
+
+Worth being blunt, because the list below reads reassuringly and could be
+mistaken for isolation.
+
+**The gates execute repository code.** `npm test` runs a test file that a model
+may have just written; `npm run build` runs a build config. That code runs as
+you, on your machine, with filesystem and network access. Stripping credentials
+from its environment reduces what it can reach. It does not stop it running.
+
+**The worker can write any file inside its worktree.** The boundary check
+catches it afterwards — that is detection, not prevention. An out-of-bounds file
+is never committed, but it was written.
+
+So v1 is **for supervised use on a repository you trust**. Watch the first runs.
+Read the diffs. Leaving it running unattended needs a real execution sandbox or
+an isolated runner first, and that is separate work that has not been done.
 
 ## Safety model
 
@@ -142,10 +207,20 @@ The prompt asks the worker to behave. The *controller* is what makes it safe:
   argument arrays. An arbitrary shell command is not a gate that fails — it is a
   value that cannot be expressed.
 - **The boundary is checked against the real diff,** including untracked files,
-  and a violation is a controller verdict the reviewer cannot waive.
+  **three times** — after the worker, after the gates (which run code and can
+  write files), and immediately before `git add -A`. A violation is a controller
+  verdict the reviewer cannot waive. The committed surface is also checked to be
+  the same set the reviewer actually read.
+- **The reviewer sees new files in full.** New files used to appear as
+  `(new file, contents not inlined)`, so a task whose whole implementation was
+  one new module could be "reviewed" unread. Anything that cannot be inlined —
+  binary, or over the byte budget — is named explicitly and escalates the task.
 - **Secrets never enter a prompt.** The packet builder reads an allow-list of
-  files; `assertNoSecrets` aborts the run rather than scrubbing, because
-  scrubbing would hide the bug that let a secret get that far.
+  files; `assertNoSecrets` runs on the **raw** text and aborts the run, because
+  scrubbing first would make the check inspect text the secret had already been
+  removed from — which is exactly the bug it had. Shape redaction happens after
+  the abort check, as defence in depth.
+- **No credential reaches a child process,** worker or gate.
 - **Run records are redacted twice** — by shape and by the exact values of this
   process's own secret-shaped environment variables.
 - **git is a short list.** No force push, no reset, no rebase, no branch delete.
@@ -161,6 +236,8 @@ verdict can override.
 ```sh
 npm run autopilot:test
 ```
+
+It also runs in CI, on every push and pull request, before the browser suite.
 
 Every test runs with **no OpenAI credential, no Anthropic credential, no network
 and no live Claude invocation**, using fake adapters. A test suite that costs

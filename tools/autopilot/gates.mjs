@@ -14,6 +14,7 @@
 
 import { spawn } from 'node:child_process';
 import { redact } from './redaction.mjs';
+import { gateEnv } from './child-env.mjs';
 import { CODES, fail } from './errors.mjs';
 
 /** The closed set. Adding a gate is a code change in this repository. */
@@ -45,16 +46,23 @@ const tail = (s) => {
 /**
  * Run one gate. No shell: `spawn` with an argument array, so nothing in the
  * environment or the TaskSpec can be interpreted as syntax.
+ *
+ * And no credentials. A gate runs repository code that a model just wrote — a
+ * test file, a build step, a config plugin. `env: process.env` meant any of
+ * that could read OPENAI_API_KEY, the owner's GitHub token, or npm auth. The
+ * gate needs PATH, HOME and the ordinary build environment; it has never needed
+ * a credential, and now it cannot have one (D62).
  */
-export async function runGate(name, { cwd, timeoutMs = 30 * 60_000, spawnImpl = spawn } = {}) {
+export async function runGate(name, { cwd, timeoutMs = 30 * 60_000, spawnImpl = spawn, env: envSource } = {}) {
   const [command, ...args] = commandFor(name);
   const startedAt = Date.now();
+  const { env } = gateEnv({ source: envSource ?? process.env });
 
   return new Promise((resolve) => {
     const child = spawnImpl(command, args, {
       cwd,
       shell: false,
-      env: { ...process.env, CI: '1', FORCE_COLOR: '0' },
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

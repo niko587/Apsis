@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   check:
-    name: types · lint · unit · build · reachability
+    name: types · lint · unit · autopilot · build · reachability
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -28,8 +28,9 @@ jobs:
 
       - run: npm ci
 
-      # Five gates, named separately so a red run says which one broke rather
-      # than "the check failed". Order is cheapest-and-most-diagnostic first.
+      # Gates named separately so a red run says which one broke rather than
+      # "the check failed". Order is cheapest-and-most-diagnostic first, and
+      # the Autopilot suite sits before the expensive browser stage.
       - name: TypeScript
         run: npx tsc -b
 
@@ -39,8 +40,22 @@ jobs:
       - name: Unit tests
         run: npx vitest run
 
+      # Autopilot's own suite, on Node's test runner. It runs here for the same
+      # reason it runs fast: every test uses fake adapters, so CI needs NO
+      # OpenAI credential, NO Anthropic credential, no network and no Claude
+      # invocation. A controller that enforces boundaries is exactly the kind of
+      # code that must not drift untested (D67).
+      - name: Autopilot controller tests
+        run: npm run autopilot:test
+
       - name: Production build
         run: npm run build
+
+      # Runs after the build so it can scan dist/ as well as the source graph:
+      # the assertion that Autopilot never reaches the browser bundle is only
+      # meaningful once a bundle exists.
+      - name: Autopilot isolation (post-build bundle scan)
+        run: node --test tools/autopilot/isolation.test.mjs
 
       # Everything above this line runs in Node and proves nothing about what a
       # user can reach. D12 shipped with all four green. This is the gate that

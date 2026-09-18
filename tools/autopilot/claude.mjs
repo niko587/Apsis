@@ -37,6 +37,7 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { CODES, fail } from './errors.mjs';
 import { redact } from './redaction.mjs';
+import { workerEnv } from './child-env.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -52,6 +53,29 @@ export const DEFAULT_WORKER_MODEL = 'claude-opus-5';
  * gates the controller runs itself.
  */
 export const DEFAULT_PERMISSION_MODE = 'acceptEdits';
+
+/**
+ * The worker's tool surface, pinned explicitly (D63).
+ *
+ * `--permission-mode acceptEdits` alone decides how PROMPTS are answered, not
+ * which tools exist. Which tools exist was coming from the owner's own Claude
+ * Code settings — so a developer who had (entirely reasonably) allowed
+ * `Bash(git *)` or broad Bash for their interactive work was silently granting
+ * the same thing to an unattended worker. Autopilot's behaviour must not depend
+ * on a file it does not own.
+ *
+ * So the set is stated: read, navigate, and write files. **No Bash in v1.** The
+ * controller runs the gates and hands back their real output on a repair turn,
+ * which is the thing a worker would have wanted a shell for. What it loses is
+ * the ability to run one test file in a tight loop — a genuine cost in worker
+ * efficiency, accepted because "the coding agent cannot execute arbitrary
+ * commands" is a sentence worth being able to say before the first unattended
+ * run.
+ */
+export const WORKER_TOOLS = Object.freeze(['Read', 'Edit', 'Write', 'Glob', 'Grep']);
+
+/** Denied by name as well as omitted from the allowed set — belt and braces. */
+export const WORKER_DENIED_TOOLS = Object.freeze(['Bash', 'WebFetch', 'WebSearch', 'Task']);
 
 export async function claudeAvailable({ bin = 'claude', execImpl = execFileAsync } = {}) {
   try {
@@ -85,7 +109,33 @@ export function buildArgs({
   addDir = null,
   effort = null,
 } = {}) {
-  const args = ['-p', '--output-format', 'json', '--model', model, '--permission-mode', permissionMode];
+  if (permissionMode === 'bypassPermissions') {
+    fail(CODES.WORKER_FAILED, 'bypassPermissions is never used for an Autopilot worker');
+  }
+
+  const args = [
+    '-p',
+    '--output-format',
+    'json',
+    '--model',
+    model,
+    '--permission-mode',
+    permissionMode,
+    // The tool surface, stated rather than inherited.
+    '--tools',
+    WORKER_TOOLS.join(','),
+    '--disallowed-tools',
+    WORKER_DENIED_TOOLS.join(','),
+    // Load project settings only: the owner's personal `user` and `local`
+    // settings — where a broad Bash allowance most often lives — are not this
+    // worker's business.
+    '--setting-sources',
+    'project',
+    // With no --mcp-config supplied, this means no MCP servers at all. An MCP
+    // tool is a capability arriving from a config file, which is exactly the
+    // kind of inheritance this block exists to stop.
+    '--strict-mcp-config',
+  ];
 
   if (resumeSessionId) {
     args.push('--resume', resumeSessionId);
@@ -148,15 +198,23 @@ export async function runWorker({
   maxBudgetUsd = null,
   timeoutMs = 60 * 60_000,
   spawnImpl = spawn,
+  env: envSource,
 } = {}) {
   const args = buildArgs({ model, sessionId, resumeSessionId, maxBudgetUsd, addDir: cwd });
   const startedAt = Date.now();
+
+  /**
+   * The worker does not get the owner's credentials (D62) — above all not
+   * OPENAI_API_KEY, which belongs to the other provider in this loop and to the
+   * controller alone.
+   */
+  const { env, removed } = workerEnv({ source: envSource ?? process.env });
 
   const outcome = await new Promise((resolve) => {
     const child = spawnImpl(bin, args, {
       cwd,
       shell: false,
-      env: process.env,
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -210,6 +268,8 @@ export async function runWorker({
   const parsed = parseResult(outcome.stdout);
   return {
     ...parsed,
+    /** NAMES only. A value never reaches a caller, a log or a run record. */
+    removedEnv: removed,
     // Prefer the id we chose: it is the one that exists even when parsing fails.
     sessionId: parsed.sessionId ?? sessionId,
     exitCode: outcome.exitCode,

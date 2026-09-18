@@ -139,9 +139,24 @@ export async function buildProjectPacket({
 
   const packet = clip(sections.join('\n\n'), LIMITS.total, 'packet');
 
-  // Belt: the allow-list should make this impossible. Braces: it is the last
-  // point at which a leak is still cheap to stop.
-  return assertNoSecrets(redact(packet));
+  /**
+   * ORDER IS THE WHOLE POINT, and it was wrong here.
+   *
+   * This used to read `assertNoSecrets(redact(packet))` — which redacts first,
+   * so the assertion inspects text that no longer contains the secret and
+   * therefore always passes. The stated invariant ("abort rather than scrub and
+   * continue") was inverted by its own implementation: a leaked key would have
+   * been quietly replaced with [REDACTED] and the packet sent onward, with the
+   * packet-builder bug that read it still in place and now invisible.
+   *
+   * Assert on the RAW text. A secret here means the allow-list let something
+   * through, and that is a bug to stop on, not to clean up after. The shape
+   * redaction that follows is defence in depth for credential-shaped strings
+   * this process does not own — a key quoted in a document, say — and it runs
+   * only once the abort check has passed (D64).
+   */
+  assertNoSecrets(packet);
+  return redact(packet);
 }
 
 export const __test = { contracts, clip, LIMITS };

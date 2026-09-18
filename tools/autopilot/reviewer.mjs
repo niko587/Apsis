@@ -15,7 +15,6 @@
 
 import { REVIEW_RESULT_SCHEMA_FOR_MODEL, parseReviewResult } from './schemas.mjs';
 import { requestStructured } from './openai.mjs';
-import { redact } from './redaction.mjs';
 
 export const REVIEWER_INSTRUCTIONS = `You are the reviewing half of a supervised
 automation loop for the Apsis repository. A Claude Code worker implemented the
@@ -46,7 +45,14 @@ What your verdict CANNOT do, because the controller decided it first:
 - it cannot pass a failed gate;
 - it cannot permit a change to a forbidden or unlisted file;
 - it cannot merge anything, and nothing merges automatically in this version;
-- it cannot extend the repair budget.
+- it cannot extend the repair budget;
+- it cannot bless a file that was not included in the diff you were given. If a
+  "NOT REVIEWED" section appears below, those files exist and you have not seen
+  them; the controller escalates the task whatever you say.
+
+Every NEW file in this change is included in full in the diff. Read new files as
+carefully as you read edits — a task whose whole implementation is one new module
+is exactly the case where skimming the diff would miss everything.
 
 Set repairPrompt to "" unless the verdict is "repair". Set ownerAttention to ""
 unless the owner genuinely needs to look.`;
@@ -57,6 +63,7 @@ export function buildReviewPacket({
   branch,
   changedFiles,
   diff,
+  unreviewable = [],
   gateResults,
   boundary,
   workerSummary,
@@ -71,7 +78,12 @@ export function buildReviewPacket({
     .map((r) => `### ${r.gate} output (tail)\n\n\`\`\`\n${r.tail}\n\`\`\``)
     .join('\n\n');
 
-  return redact(
+  /**
+   * RAW. The caller runs `assertNoSecrets` on this and only then redacts — see
+   * the note in context.mjs. Redacting here would make the abort check
+   * inspect text the secret had already been removed from (D64).
+   */
+  return (
     [
       `## TaskSpec\n\n\`\`\`json\n${JSON.stringify(taskSpec, null, 2)}\n\`\`\``,
       `## Position\n\n- base commit: ${baseSha}\n- branch: ${branch}\n- repair iteration: ${iteration}`,
@@ -83,11 +95,16 @@ export function buildReviewPacket({
       }`,
       `## Gate results (controller ran these, in the worktree)\n\n${gates || '- (none run)'}`,
       failures,
+      unreviewable.length > 0
+        ? `## NOT REVIEWED — ${unreviewable.length} file(s) could not be included as text\n\n${unreviewable
+            .map((u) => `- ${u.file} — ${u.reason} (${u.bytes} bytes)`)
+            .join('\n')}\n\nThese are NOT in the diff below. You have not seen them. The controller escalates this task regardless of your verdict.`
+        : '',
       `## Worker summary (the worker's own account — treat as a claim)\n\n${workerSummary}`,
       `## Diff\n\n\`\`\`diff\n${diff}\n\`\`\``,
     ]
       .filter(Boolean)
-      .join('\n\n'),
+      .join('\n\n')
   );
 }
 

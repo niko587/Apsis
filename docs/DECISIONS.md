@@ -904,3 +904,107 @@ bypass. A capability that is not in the graph cannot be reached by a bug, an
 injection, or a future edit that forgets why the guard existed.
 Forbids: an automatic merge to main; `--force` in any form; deleting anything
 outside `.apsis-autopilot/`; a worker that commits.
+
+## D62 — No child process inherits the owner's credentials
+Both spawns used `env: process.env`, so the Claude worker received
+`OPENAI_API_KEY` and every gate could read it from a test file a model had just
+written. Autopilot's premise is that two providers do different jobs behind a
+controller; handing one provider's key to the other's process dissolves that by
+inheritance, silently, with nothing in the code saying so. It was never only
+about OpenAI — the owner's shell also holds `GITHUB_TOKEN`, `WORKOS_API_KEY`,
+npm auth and AWS credentials.
+`tools/autopilot/child-env.mjs` denies by NAME (secret-shaped), then by VALUE
+(credential-shaped, or byte-identical to one of this process's own secrets, which
+catches a format nobody here has heard of). Ordinary environment survives —
+`PATH`, `HOME`, `NODE_OPTIONS`, `SSH_AUTH_SOCK` (a socket path, exempt by name) —
+because a gate still has to run. Only NAMES are ever returned or recorded.
+Deny-list rather than allow-list: an allow-list of environment variables is how
+you discover in production that npm needed a cache path. The population being
+protected is credentials, which a name-and-value filter describes well.
+v1 assumes Claude Code's normal stored login. One narrowly named opt-in,
+`APSIS_AUTOPILOT_PASS_ANTHROPIC_KEY=1`, re-admits `ANTHROPIC_API_KEY` and
+nothing else.
+Forbids: `env: process.env` on any spawn; passing a credential to a worker or a
+gate; putting a removed VALUE in a log or a run record.
+
+## D63 — The worker's tool surface is stated, not inherited
+`--permission-mode acceptEdits` decides how prompts are answered, not which
+tools exist. Which tools existed was coming from the owner's own Claude Code
+settings, so a developer who had reasonably allowed `Bash(git *)` for
+interactive work was silently granting it to an unattended worker.
+The invocation now pins `--tools Read,Edit,Write,Glob,Grep`,
+`--disallowed-tools Bash,WebFetch,WebSearch,Task`, `--setting-sources project`
+(not the owner's `user`/`local` settings) and `--strict-mcp-config` with no MCP
+config, which means no MCP servers at all. `bypassPermissions` throws.
+**The worker has no shell in v1.** The cost is real: it cannot run one test in a
+tight loop and must reason from the code, learning what failed only on a repair
+turn from the controller's real gate output. The purchase is being able to say
+plainly, before a first unattended run, that the coding agent cannot execute
+arbitrary commands.
+Forbids: depending on any Claude settings file Autopilot does not own; granting
+the worker Bash; `bypassPermissions`; `--dangerously-skip-permissions`.
+
+## D64 — Assert on raw text, then redact — never the reverse
+`context.mjs` read `assertNoSecrets(redact(packet))`. Redaction removes the
+secret, so the assertion inspected text that could not contain one and therefore
+always passed. The stated invariant — abort rather than scrub and continue — was
+inverted by its own implementation: a leaked key would have been quietly
+replaced with `[REDACTED]` and sent onward, with the packet-builder bug that read
+it still in place and now invisible.
+Order is now: build RAW → `assertNoSecrets(raw)` → `redact` → send. The three
+prompt builders (`context`, `reviewer`, `worker-prompt`) return raw text for
+exactly this reason; the controller asserts and redacts at the boundary. Output
+and run-record redaction is unchanged — that is a different direction and still
+scrubs.
+Forbids: redacting before a secret assertion; a prompt builder that pre-scrubs
+its own output.
+
+## D65 — An unread file is not a reviewed file
+New files reached the reviewer as `(new file, contents not inlined)`, so a task
+whose entire implementation was one new module produced a review in which Astra
+accepted code it had never seen — recorded as "reviewed".
+`reviewDiff` now inlines untracked text files as new-file hunks read from disk
+(nothing is staged; `git add` to produce a diff would mutate the index of a tree
+the controller has not accepted). Binary files and files over the byte budget are
+NOT summarised into acceptability: they come back in `unreviewable`, the packet
+tells the reviewer explicitly what it has not seen, and the controller escalates
+regardless of the verdict.
+Forbids: describing a file as reviewed when its contents were not in the packet;
+staging to produce a diff; silent truncation.
+
+## D66 — Three boundary checks, because gates run code
+The order was worker → boundary → gates → review → `git add -A`. A gate RUNS
+repository code: a build writes output, a test can write a fixture, a tool drops
+a cache. So the surface checked was not the surface committed, and anything
+appearing in between entered the branch with no verdict from anyone.
+The boundary is now checked after the worker, **after the gates**, and
+immediately before the commit — plus a set comparison proving the committed
+surface is the one the reviewer actually read (`surface-drift`). Review is not
+even requested for an out-of-bounds diff: spending a call to obtain an opinion
+the controller must ignore would also put the reviewer in the position of
+appearing to bless something it cannot.
+Relatedly: a real `run` requires `APSIS_AUTOPILOT_WORKER_BUDGET_USD` and has no
+default. The loop count bounds how many turns happen, not what a turn costs.
+Inventing a number would be pretending to know what a task of unknown size costs
+on the owner's plan; requiring one costs a single variable and makes the ceiling
+a decision. `plan` and `dry-run` never ask, because they never invoke a worker.
+Forbids: committing a surface no boundary check has seen; a default worker
+budget; asking the reviewer about a diff that is already refused.
+
+## D67 — v1 is supervised, and the docs say so
+Autopilot constrains git, the file surface, secrets and the worker's tools. It
+does NOT sandbox execution: the gates run `npm test` and `npm run build`, which
+execute a test file and a build config that a model may have just written, as
+the owner's user, with filesystem and network access. Stripping credentials from
+that environment reduces what it can reach; it does not stop it running. And the
+worker can write any file inside its worktree — the boundary check is detection,
+not prevention.
+So the policy and README say plainly: v1 is for supervised use on a trusted
+repository, and **unattended autonomy requires a stronger execution sandbox or an
+isolated runner first**, which is separate work and is not attempted here.
+The Autopilot suite also runs in CI now, before the browser stage, needing no
+credential and no network — a controller that enforces boundaries is exactly the
+kind of code that must not drift untested.
+Forbids: describing v1 as sandboxed or container-isolated; running it unattended
+on a repository the owner does not trust; a CI configuration that omits
+`autopilot:test`.

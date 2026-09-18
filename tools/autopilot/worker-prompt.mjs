@@ -23,12 +23,16 @@
 
 import { GATE_NAMES } from './gates.mjs';
 import { ALWAYS_FORBIDDEN } from './boundaries.mjs';
-import { redact } from './redaction.mjs';
+import { WORKER_TOOLS, WORKER_DENIED_TOOLS } from './claude.mjs';
 
 const list = (items) => (items.length > 0 ? items.map((i) => `- ${i}`).join('\n') : '- (none)');
 
+/**
+ * Returns RAW text. The controller runs `assertNoSecrets` on it and only then
+ * redacts — redacting here would defeat the abort check (D64).
+ */
 export function buildWorkerPrompt({ taskSpec, baseSha, branch, worktreePath, projectNotes = '' }) {
-  return redact(`# Autopilot task ${taskSpec.taskId}
+  return `# Autopilot task ${taskSpec.taskId}
 
 ${taskSpec.title}
 
@@ -85,8 +89,13 @@ The controller will run these itself, in this worktree, after you return:
 
 ${list(taskSpec.requiredGates.map((g) => `${g}  (of: ${GATE_NAMES.join(', ')})`))}
 
-Run them yourself as you work — that is what they are for. But understand that
-your report of them is not what counts.
+**You cannot run them yourself.** Your tools in this session are
+${WORKER_TOOLS.join(', ')} — ${WORKER_DENIED_TOOLS.join(' and ')} are disabled, so
+there is no shell available to you (D63). That is deliberate for this version of
+Autopilot, and it changes how you should work: reason from the code rather than
+from a test run, keep changes small enough to be right by inspection, and if a
+gate fails you will be told exactly which one and given its real output on a
+repair turn. Do not claim you ran anything.
 
 ## Rules
 
@@ -95,6 +104,9 @@ your report of them is not what counts.
   exactly this.
 - Do not commit, do not create branches, do not push, do not touch the base
   branch. The controller owns git and will commit once the work is accepted.
+- Every file you create is read IN FULL by the reviewer. A new binary file, or
+  one too large to inline, cannot be reviewed and will escalate the task — so
+  do not add one unless the task asks for it.
 - Do not modify any file outside this worktree.
 - Do not print, echo, or write any secret, API key or credential anywhere.
 - Do not add a dependency unless the task explicitly asks for one.
@@ -102,10 +114,9 @@ your report of them is not what counts.
 
 ## Your summary
 
-Return a factual account: what you changed and why, what you ran and what it
-said, anything you could not do, and anything the reviewer should look at
-closely. Do not claim a gate passed unless you ran it and saw it pass.
-${projectNotes ? `\n## Repository notes\n\n${projectNotes}\n` : ''}`);
+Return a factual account: what you changed and why, what you could not do, and
+anything the reviewer should look at closely.
+${projectNotes ? `\n## Repository notes\n\n${projectNotes}\n` : ''}`;
 }
 
 /**
@@ -147,7 +158,7 @@ export function buildRepairPrompt({
     ? `${banner}\n\nThis continues the session you already have. The task has not changed.`
     : `${banner}\n\nThis session is fresh — the installed Claude CLI could not resume the\nprevious one, so the entire task travels with this prompt. Work already done\nis present in the worktree; read it before changing it.\n\n${buildWorkerPrompt({ taskSpec, baseSha, branch, worktreePath })}`;
 
-  return redact(`${head}
+  return `${head}
 
 ## What must be fixed now (repair turn ${iteration} of ${taskSpec.maxRepairCycles})
 
@@ -176,5 +187,5 @@ ${diff}
 \`\`\`
 
 Fix the causes, not the symptoms. Do not weaken a test to make a gate pass. Do
-not commit. Return a factual summary of what changed in this turn.`);
+not commit. Return a factual summary of what changed in this turn.`;
 }
