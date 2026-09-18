@@ -71,9 +71,13 @@ function ClusterNav() {
    *
    * Done at the events that navigate rather than in an effect on `path`: an
    * effect would set state during a render caused by something else, which is a
-   * cascading render and which the linter is right to flag. The picker can only
-   * be open across a navigation if the user clicks a child chip or a breadcrumb
-   * while it is showing, and both are right here.
+   * cascading render and which the linter is right to flag.
+   *
+   * Every pointer path that changes `path` must call this: a child chip, a
+   * breadcrumb, and **the Back button**. Back was the one that did not, so
+   * "open the picker, click Back" left a grouping menu open over a level the
+   * user had already left — the menu still named the old level's options while
+   * the heading below it had moved on. Escape has its own ordering below.
    */
   const closePicker = () => setPickerOpen(false);
 
@@ -291,7 +295,14 @@ function ClusterNav() {
       )}
 
       {path.length > 0 && (
-        <button type="button" className="uv-back" onClick={pop}>
+        <button
+          type="button"
+          className="uv-back"
+          onClick={() => {
+            closePicker();
+            pop();
+          }}
+        >
           ← Back <kbd>Esc</kbd>
         </button>
       )}

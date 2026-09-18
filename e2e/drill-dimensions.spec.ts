@@ -20,6 +20,9 @@ const dims = (page: Page) => page.locator('.uv-dims button');
 const children = (page: Page) => page.locator('.uv-children button');
 const heading = (page: Page) => page.locator('.uv-clusters h3');
 const rows = (page: Page) => page.locator('.ll-name');
+/** Row identity, which the markup already carries as `id="lead-opt-<leadId>"`. */
+const optionIds = (page: Page) =>
+  page.locator('.leadlist li[role=option]').evaluateAll((els) => els.map((el) => el.id));
 const header = async (page: Page) =>
   ((await page.locator('#leadlist-label').textContent()) ?? '').replace(/\s+/g, ' ').trim();
 
@@ -197,7 +200,7 @@ test.describe('choosing a grouping', () => {
 });
 
 test.describe('the >150 terminal cluster is honest and reachable (D54)', () => {
-  test('says "showing 150 of N" and search reaches past the cap', async ({ page }) => {
+  test('says "showing 150 of N" and search reaches a member past the cap', async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 1000 });
     await boot(page);
 
@@ -205,7 +208,9 @@ test.describe('the >150 terminal cluster is honest and reachable (D54)', () => {
     // The EXACT size is asserted in the unit regression test against the pure
     // seeded book; here it is deliberately not, because the running app applies
     // decay at boot and the temperature split therefore drifts. Asserting a
-    // live constant would be asserting the clock.
+    // live constant would be asserting the clock. (`?feed=off` means the source
+    // never starts, and the decay interval lives inside `start()` — so
+    // membership does hold still for the duration of THIS test.)
     await enter(page, 'Northeast');
     await enter(page, 'New York');
     await enter(page, 'New York');
@@ -220,20 +225,118 @@ test.describe('the >150 terminal cluster is honest and reachable (D54)', () => {
     expect(Number(shown![1])).toBe(150);
     expect(Number(shown![2]!.replace(/,/g, ''))).toBeGreaterThan(150);
 
-    const visible = await rows(page).allTextContents();
+    const visible = await optionIds(page);
     expect(visible.length).toBe(150);
+    const rendered = new Set(visible);
 
-    // Search is applied BEFORE the cap, which is the whole reachability
-    // argument: a precise name surfaces regardless of score rank.
-    const target = visible[visible.length - 1]!;
-    await page.fill('.leadsearch', target);
+    /**
+     * THE POINT OF THIS TEST, and what it used to get wrong.
+     *
+     * It previously searched for `visible[visible.length - 1]` — the 150th
+     * rendered row. That lead was ALREADY on screen, so finding it again proved
+     * only that search does not hide things. The claim being made is much
+     * stronger: a member the cap EXCLUDED is still reachable, because search is
+     * applied before the cap rather than to the 150 survivors.
+     *
+     * So the target has to be a lead this cluster contains and this roster is
+     * not showing. It is found from the live page rather than from a debug hook
+     * or a recomputed book: surnames are drawn from the rendered rows, each is
+     * typed into the real search box, and the first result carrying a lead id
+     * that was NOT among the first 150 is the target. It is a cluster member by
+     * construction — an in-cluster search returned it.
+     *
+     * Identity is the lead id (`#lead-opt-<id>` is already on every row), never
+     * the name. That is what makes the duplicate-name question moot: two leads
+     * may share "Ana Reyes", and the assertions below are still about one
+     * specific underlying lead.
+     */
+    const surnames = [
+      ...new Set(
+        (await rows(page).allTextContents()).map((n) => n.trim().split(/\s+/).pop()!),
+      ),
+    ].slice(0, 25);
+
+    let target: { id: string; name: string } | null = null;
+    for (const surname of surnames) {
+      await page.fill('.leadsearch', surname);
+      await page.waitForTimeout(350);
+      const found = await page
+        .locator('.leadlist li[role=option]')
+        .evaluateAll((els) =>
+          els.map((el) => ({
+            id: el.id,
+            name: el.querySelector('.ll-name')?.textContent?.trim() ?? '',
+          })),
+        );
+      const unseen = found.find((f) => f.id !== '' && !rendered.has(f.id));
+      if (unseen) {
+        target = unseen;
+        break;
+      }
+    }
+
+    expect(
+      target,
+      'a cluster of >150 must have members outside the 150 rendered rows',
+    ).not.toBeNull();
+
+    // 1. The target is genuinely absent from the roster when nothing is typed.
+    await page.fill('.leadsearch', '');
     await page.waitForTimeout(400);
-    expect(await rows(page).allTextContents()).toContain(target);
+    const row = page.locator(`.leadlist li[id="${target!.id}"]`);
+    await expect(row).toHaveCount(0);
+    expect(await header(page)).toMatch(/showing 150 of/);
+
+    // 2. Its name, typed as a user types it, brings it back.
+    await page.fill('.leadsearch', target!.name);
+    await page.waitForTimeout(400);
+    await expect(row).toHaveCount(1);
     expect(await header(page)).toContain('match');
 
-    await page.getByRole('option', { name: new RegExp(target) }).first().click();
+    // 3. And it can be selected with a real click — the property is
+    //    reachability, not mere rendering.
+    await row.click();
     await page.waitForTimeout(600);
+    await expect(row).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(1);
+  });
+});
+
+test.describe('Back is a navigation, so it closes the picker (A1)', () => {
+  test('clicking Back closes an open picker and pops exactly one level', async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await boot(page);
+
+    await enter(page, 'Northeast');
+    await enter(page, 'New York');
+    const depth = await crumbs(page).count(); // GLOBAL + two steps
+    expect(depth).toBe(3);
+
+    await trigger(page).click();
+    await expect(page.locator('.uv-dims')).toBeVisible();
+    await expect(trigger(page)).toHaveAttribute('aria-expanded', 'true');
+
+    /**
+     * The defect: every OTHER way of navigating closed the picker — a child
+     * chip, a breadcrumb, Escape — but the visible Back button called `pop`
+     * directly. So the menu stayed open over the parent level, still naming the
+     * options of a level the user had just left.
+     */
+    await page.locator('.uv-back').click();
+    await page.waitForTimeout(800);
+
+    await expect(page.locator('.uv-dims')).toHaveCount(0);
+    await expect(trigger(page)).toHaveAttribute('aria-expanded', 'false');
+
+    // Exactly one level, not two: closing the menu must not consume the pop.
+    expect(await crumbs(page).count()).toBe(depth - 1);
+
+    // And the parent level is a working level, not a husk.
+    await expect(heading(page)).toBeVisible();
+    expect(await children(page).count()).toBeGreaterThan(1);
+    await expect(trigger(page)).toBeEnabled();
+    await trigger(page).click();
+    await expect(page.locator('.uv-dims')).toBeVisible();
   });
 });
 
