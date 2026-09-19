@@ -23,6 +23,7 @@
 import { randomUUID } from 'node:crypto';
 import { AutopilotError, CODES, fail } from './errors.mjs';
 import { enforceBoundaries, branchNameFor, worktreeDirFor, ALWAYS_FORBIDDEN } from './boundaries.mjs';
+import { MAX_REPAIR_CYCLES } from './schemas.mjs';
 import { runGates } from './gates.mjs';
 import { buildProjectPacket } from './context.mjs';
 import { planTask } from './planner.mjs';
@@ -31,7 +32,7 @@ import { buildWorkerPrompt, buildRepairPrompt } from './worker-prompt.mjs';
 import { runWorker, supportsResume, claudeAvailable } from './claude.mjs';
 import { createRunStore } from './run-state.mjs';
 import { assertNoSecrets, redact } from './redaction.mjs';
-import { defaultGit } from './git.mjs';
+import { defaultGit, reviewFingerprint } from './git.mjs';
 
 export const OUTCOMES = Object.freeze({
   READY: 'ready-for-owner-approval',
@@ -171,6 +172,30 @@ export async function runAutopilot(options, injected = {}) {
 
     /* 4..8 — IMPLEMENT / BOUNDARY / GATES / REVIEW / DECIDE ------------ */
 
+    /**
+     * The repair limit the loop actually uses (D69).
+     *
+     * `APSIS_AUTOPILOT_MAX_REPAIRS` existed, was loaded into
+     * `config.maxRepairCycles`, and was then ignored: the loop read
+     * `taskSpec.maxRepairCycles`, so an owner who set 1 got whatever Astra
+     * asked for. A configuration value that does nothing is worse than no
+     * configuration value, because it is believed.
+     *
+     * The lowest of the three wins. The owner can always tighten; neither the
+     * planner nor the owner can exceed the system ceiling.
+     */
+    const repairLimit = Math.min(
+      taskSpec.maxRepairCycles,
+      config.maxRepairCycles ?? MAX_REPAIR_CYCLES,
+      MAX_REPAIR_CYCLES,
+    );
+    store.step('repair-limit', {
+      taskSpec: taskSpec.maxRepairCycles,
+      config: config.maxRepairCycles ?? null,
+      ceiling: MAX_REPAIR_CYCLES,
+      effective: repairLimit,
+    });
+
     const canResume = await deps.supportsResume({ bin: config.claudeBin });
     let sessionId = randomUUID();
     let previousSummary = '';
@@ -179,6 +204,8 @@ export async function runAutopilot(options, injected = {}) {
     let lastBoundary = null;
     let lastReview = null;
     let changedFiles = [];
+    /** What the reviewer was actually shown, hashed. See git.mjs (D68). */
+    let reviewedFingerprint = null;
 
     for (;;) {
       const resumed = iteration > 0 && canResume;
@@ -191,6 +218,7 @@ export async function runAutopilot(options, injected = {}) {
               branch,
               worktreePath,
               iteration,
+              repairLimit,
               previousSummary,
               gateResults: lastGateResults,
               boundary: lastBoundary,
@@ -299,6 +327,12 @@ export async function runAutopilot(options, injected = {}) {
        * it cannot.
        */
       let review = null;
+      reviewedFingerprint = reviewFingerprint({
+        changedFiles,
+        text: reviewDiff.text,
+        unreviewable: reviewDiff.unreviewable,
+      });
+
       if (lastBoundary.ok) {
         const rawPacket = buildReviewPacket({
           taskSpec,
@@ -324,7 +358,12 @@ export async function runAutopilot(options, injected = {}) {
         }));
         lastReview = review;
         store.writeJson(`review-${iteration}.json`, review);
-        store.step('reviewed', { iteration, verdict: review.verdict, findings: review.findings.length });
+        store.step('reviewed', {
+          iteration,
+          verdict: review.verdict,
+          findings: review.findings.length,
+          fingerprint: reviewedFingerprint,
+        });
       } else {
         lastReview = null;
         store.step('review-skipped', { iteration, because: lastBoundary.code });
@@ -383,9 +422,9 @@ export async function runAutopilot(options, injected = {}) {
         });
       }
 
-      if (iteration >= taskSpec.maxRepairCycles) {
+      if (iteration >= repairLimit) {
         return finishEscalated(store, {
-          reason: `repair limit reached (${taskSpec.maxRepairCycles})`,
+          reason: `repair limit reached (${repairLimit})`,
           code: CODES.REPAIR_LIMIT,
           review,
           branch,
@@ -486,7 +525,49 @@ export async function runAutopilot(options, injected = {}) {
       });
     }
 
-    /* 11 — COMMIT, AND STOP -------------------------------------------- */
+    /**
+     * The same BYTES, not merely the same filenames (D68).
+     *
+     * The set comparison above catches a file appearing or disappearing. It
+     * cannot see `foo.ts` being reviewed as version A and committed as version
+     * B — same name, same set, different content. A worker still finishing a
+     * write, a gate touching a source file, an editor saving in the background:
+     * each produces a commit the reviewer never saw, and each would have looked
+     * clean.
+     *
+     * So the review representation is rebuilt from the worktree as it stands
+     * right now and hashed again. Identical, or nothing is committed.
+     */
+    const finalDiff = await git.reviewDiff(worktreePath, baseSha);
+    const finalFingerprint = reviewFingerprint({
+      changedFiles: finalChanged,
+      text: finalDiff.text,
+      unreviewable: finalDiff.unreviewable,
+    });
+    store.step('fingerprint-checked', {
+      reviewed: reviewedFingerprint,
+      final: finalFingerprint,
+      match: finalFingerprint === reviewedFingerprint,
+    });
+
+    if (finalFingerprint !== reviewedFingerprint) {
+      return finishEscalated(store, {
+        reason:
+          'the worktree changed after it was reviewed — the file names match but the contents do not, ' +
+          `so the commit would contain bytes nobody reviewed (reviewed ${String(reviewedFingerprint).slice(0, 12)}, now ${finalFingerprint.slice(0, 12)})`,
+        code: CODES.CONTENT_DRIFT,
+        review: lastReview,
+        branch,
+        worktreeRel,
+        baseSha,
+        taskSpec,
+        changedFiles: finalChanged,
+        gateResults: lastGateResults,
+        boundary: finalBoundary,
+      });
+    }
+
+    /* 12 — COMMIT, AND STOP -------------------------------------------- */
 
     const headSha = await git.commitAll({
       cwd: worktreePath,

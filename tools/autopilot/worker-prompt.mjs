@@ -132,6 +132,7 @@ export function buildRepairPrompt({
   branch,
   worktreePath,
   iteration,
+  repairLimit,
   previousSummary,
   gateResults,
   boundary,
@@ -160,7 +161,7 @@ export function buildRepairPrompt({
 
   return `${head}
 
-## What must be fixed now (repair turn ${iteration} of ${taskSpec.maxRepairCycles})
+## What must be fixed now (repair turn ${iteration} of ${repairLimit ?? taskSpec.maxRepairCycles})
 
 ${failing || '(all gates passed)'}
 

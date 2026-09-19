@@ -16,6 +16,7 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CODES, fail } from './errors.mjs';
@@ -85,89 +86,102 @@ export const makeGit = (deps = {}) => {
     /**
      * The diff the reviewer actually reads.
      *
-     * THE DEFECT THIS EXISTS FOR: new files were rendered as
-     * `(new file, contents not inlined)`. A task whose entire implementation is
-     * one new module therefore produced a review in which Astra accepted code
-     * it had never seen — and "reviewed" is the word the run record used. An
-     * unread file is not a reviewed file, and the packet must not imply
-     * otherwise.
+     * THE RULE, and there is no third state: for every changed file, EITHER its
+     * complete diff is in `text`, OR the file is named in `unreviewable`. An
+     * unread file is not a reviewed file (D65), and a half-read file is worse
+     * than an unread one — it looks complete.
      *
-     * So untracked files are inlined as new-file hunks, read from disk. Nothing
-     * is staged to achieve it: `git add` to produce a diff would mutate the
-     * index of a tree the controller has not yet accepted.
+     * The first version of this got untracked files right and tracked files
+     * wrong. It ran one `git diff BASE --` for everything tracked and then
+     * sliced the combined string at the global budget, so a large tracked diff,
+     * a tracked binary modification, or simply enough tracked changes could
+     * leave Astra holding half a file with nothing in `unreviewable` to say so.
+     * The fix is to stop treating "tracked" as one blob: every changed file is
+     * now enumerated and budgeted individually, whatever its provenance.
      *
-     * Two categories cannot be reviewed as text and are NOT quietly summarised:
-     * binary files, and files too large for the byte budget. They come back in
-     * `unreviewable`, and the controller escalates rather than asking anyone to
-     * bless bytes nobody read (D65).
+     * Covered: modifications, additions, deletions (the removed text IS the
+     * thing to review), renames, and untracked additions. Binary is decided by
+     * git's own `--numstat` for tracked paths and by a NUL-byte scan for
+     * untracked ones.
      *
-     * @returns {{text: string, unreviewable: {file: string, reason: string, bytes: number}[], truncated: boolean}}
+     * Nothing is staged to produce any of this: `git add` to make a diff would
+     * mutate the index of a tree the controller has not accepted (D65).
+     *
+     * @returns {{text: string, unreviewable: {file: string, reason: string, bytes: number}[], truncated: boolean, files: string[]}}
      */
     async reviewDiff(cwd, baseSha, { maxBytes = 200_000, maxFileBytes = 64_000, fsImpl = fs } = {}) {
-      const tracked = await run(['diff', baseSha, '--'], cwd);
+      const entries = [];
+
+      /* --- tracked changes, one entry per path ------------------------- */
+      const numstat = await run(['diff', '--numstat', '-z', baseSha, '--'], cwd);
+      for (const entry of parseNumstatZ(numstat)) {
+        entries.push({
+          file: entry.path,
+          tracked: true,
+          binary: entry.binary,
+          paths: entry.paths,
+        });
+      }
+
+      /* --- untracked additions ----------------------------------------- */
       const untracked = (await one(['ls-files', '--others', '--exclude-standard'], cwd))
         .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .sort();
+        .map((v) => v.trim())
+        .filter(Boolean);
+      for (const file of untracked) entries.push({ file, tracked: false, binary: false, paths: [file] });
+
+      // Deterministic order, so the same change always produces the same bytes —
+      // which is what makes the pre-commit fingerprint meaningful (D68).
+      entries.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 
       const unreviewable = [];
+      const chunks = [];
+      let budget = maxBytes;
       let truncated = false;
-      let budget = maxBytes - tracked.length;
-      let extra = '';
 
-      for (const file of untracked) {
-        const full = path.resolve(cwd, file);
-        let stat;
-        try {
-          stat = fsImpl.statSync(full);
-        } catch {
-          unreviewable.push({ file, reason: 'unreadable', bytes: 0 });
+      for (const entry of entries) {
+        const piece = entry.tracked
+          ? await trackedPiece(entry)
+          : untrackedPiece(entry, { maxFileBytes, fsImpl, cwd });
+
+        if (piece.reason) {
+          unreviewable.push({ file: entry.file, reason: piece.reason, bytes: piece.bytes });
+          if (piece.reason === 'too-large-to-review') truncated = true;
           continue;
         }
-        if (!stat.isFile()) continue;
-
-        if (stat.size > maxFileBytes) {
-          unreviewable.push({ file, reason: 'too-large-to-review', bytes: stat.size });
-          continue;
-        }
-
-        const bytes = fsImpl.readFileSync(full);
-        if (isBinary(bytes)) {
-          unreviewable.push({ file, reason: 'binary', bytes: stat.size });
-          continue;
-        }
-
-        const body = bytes.toString('utf8');
-        const hunk =
-          `\n--- /dev/null\n+++ b/${file}\n@@ -0,0 +1,${body === '' ? 0 : body.split('\n').length} @@\n` +
-          `${body.split('\n').map((line) => `+${line}`).join('\n')}\n`;
-
-        if (hunk.length > budget) {
-          // The budget ran out. Say so about THIS file rather than cutting the
-          // packet mid-hunk and leaving a half-read module looking complete.
-          unreviewable.push({ file, reason: 'exceeded-diff-budget', bytes: stat.size });
+        if (piece.text.length > maxFileBytes) {
+          unreviewable.push({ file: entry.file, reason: 'too-large-to-review', bytes: piece.text.length });
           truncated = true;
           continue;
         }
-        extra += hunk;
-        budget -= hunk.length;
+        if (piece.text.length > budget) {
+          // The GLOBAL budget ran out. Name this file rather than cutting it in
+          // half: a file that is 60% present reads as reviewed.
+          unreviewable.push({ file: entry.file, reason: 'exceeded-diff-budget', bytes: piece.text.length });
+          truncated = true;
+          continue;
+        }
+        chunks.push(piece.text);
+        budget -= piece.text.length;
       }
 
-      let text = tracked + extra;
-      if (text.length > maxBytes) {
-        text = `${text.slice(0, maxBytes)}\n…diff truncated at ${maxBytes} bytes…`;
-        truncated = true;
-      }
+      let text = chunks.join('');
       if (unreviewable.length > 0) {
         text +=
           `\n\n!!! ${unreviewable.length} file(s) in this change were NOT included above and have NOT been reviewed:\n` +
           unreviewable.map((u) => `  ${u.file} — ${u.reason} (${u.bytes} bytes)`).join('\n') +
           '\n';
       }
-      return { text, unreviewable, truncated };
-    },
 
+      return { text, unreviewable, truncated, files: entries.map((e) => e.file) };
+
+      /** One tracked path's complete diff, or a reason it cannot be one. */
+      async function trackedPiece(entry) {
+        if (entry.binary) return { reason: 'binary', bytes: 0, text: '' };
+        const diff = await run(['diff', baseSha, '--', ...entry.paths], cwd);
+        return { reason: null, bytes: diff.length, text: diff };
+      }
+    },
     /** A new branch at an exact base commit, checked out in its own directory. */
     async addWorktree({ root, dir, branch, baseSha }) {
       await run(['worktree', 'add', '-b', branch, path.resolve(root, dir), baseSha], root);
@@ -213,6 +227,97 @@ export const makeGit = (deps = {}) => {
     },
   };
 };
+
+
+/**
+ * `git diff --numstat -z` — the enumeration this module trusts.
+ *
+ * NUL-delimited because a filename may contain anything a filesystem allows,
+ * including a newline, and a parser that splits on `\n` is a parser that can be
+ * handed a path it will get wrong. Binary paths arrive as `-\t-\t`, which is
+ * git's own answer to "is this reviewable text" and better than guessing.
+ *
+ * Rename and copy entries emit an empty path slot followed by the old and new
+ * paths, so an entry carries BOTH and the diff is requested for the pair.
+ */
+export function parseNumstatZ(raw) {
+  const out = [];
+  const fields = raw.split('\0');
+  let i = 0;
+  while (i < fields.length) {
+    const head = fields[i];
+    if (head === undefined || head === '') {
+      i += 1;
+      continue;
+    }
+    const parts = head.split('\t');
+    if (parts.length < 3) {
+      i += 1;
+      continue;
+    }
+    const [added, deleted, inlinePath] = parts;
+    const binary = added === '-' && deleted === '-';
+    if (inlinePath === '') {
+      // Rename or copy: the next two fields are the old and new paths.
+      const oldPath = fields[i + 1] ?? '';
+      const newPath = fields[i + 2] ?? '';
+      if (newPath !== '') out.push({ path: newPath, paths: [oldPath, newPath], binary });
+      i += 3;
+    } else {
+      out.push({ path: inlinePath, paths: [inlinePath], binary });
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/** One untracked file rendered as a complete new-file hunk, or a reason it cannot be. */
+function untrackedPiece(entry, { maxFileBytes, fsImpl, cwd }) {
+  const full = path.resolve(cwd, entry.file);
+  let stat;
+  try {
+    stat = fsImpl.statSync(full);
+  } catch {
+    return { reason: 'unreadable', bytes: 0, text: '' };
+  }
+  if (!stat.isFile()) return { reason: 'unreadable', bytes: 0, text: '' };
+  if (stat.size > maxFileBytes) return { reason: 'too-large-to-review', bytes: stat.size, text: '' };
+
+  const bytes = fsImpl.readFileSync(full);
+  if (isBinary(bytes)) return { reason: 'binary', bytes: stat.size, text: '' };
+
+  const body = bytes.toString('utf8');
+  const lines = body === '' ? 0 : body.split('\n').length;
+  const text =
+    `\n--- /dev/null\n+++ b/${entry.file}\n@@ -0,0 +1,${lines} @@\n` +
+    `${body.split('\n').map((line) => `+${line}`).join('\n')}\n`;
+  return { reason: null, bytes: stat.size, text };
+}
+
+/**
+ * A fingerprint of exactly what the reviewer was shown (D68).
+ *
+ * The pre-commit check already proved the changed FILE SET had not moved. It
+ * could not see a file whose NAME survived and whose BYTES changed — a worker
+ * (or a gate, or a stray editor save) touching `foo.ts` again after the review
+ * produces an identical file list and a different commit. That is a review
+ * TOCTOU gap, and comparing names cannot close it.
+ *
+ * So the controller hashes the review representation itself and re-derives it
+ * immediately before committing. The inputs are everything the verdict was
+ * based on: the file list, the complete diff text, and the unreviewable
+ * metadata. Anything else changing is not something Astra saw.
+ */
+export function reviewFingerprint({ changedFiles = [], text = '', unreviewable = [] } = {}) {
+  const canonical = JSON.stringify({
+    files: [...changedFiles].sort(),
+    text,
+    unreviewable: [...unreviewable]
+      .map((u) => ({ file: u.file, reason: u.reason, bytes: u.bytes }))
+      .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)),
+  });
+  return createHash('sha256').update(canonical, 'utf8').digest('hex');
+}
 
 /**
  * Binary detection, the pragmatic way git itself uses: a NUL byte in the first

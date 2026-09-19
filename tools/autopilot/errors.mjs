@@ -30,6 +30,7 @@ export const CODES = Object.freeze({
   NO_BUDGET: 'no-worker-budget',
   UNREVIEWABLE: 'unreviewable-files',
   SURFACE_DRIFT: 'surface-drift',
+  CONTENT_DRIFT: 'content-drift',
   STALE_BASE: 'stale-base',
   CLAUDE_MISSING: 'claude-missing',
   REFUSED_PUSH: 'refused-push',

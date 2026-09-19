@@ -1,6 +1,7 @@
 # Next Actions
 
-_Last updated: 2026-09-18 (Autopilot pre-live safety closeout).
+_Last updated: 2026-09-18 (Autopilot review-integrity + CI reachability closeout;
+CI record corrected, D71).
 Ordered. Each item: what, why now, acceptance, suggested model (spec §2)._
 
 **Closed:**
@@ -16,6 +17,13 @@ Ordered. Each item: what, why now, acceptance, suggested model (spec §2)._
 containment check is fixed (D21); it now asserts the click point rather than the
 whole bounding box. No product or layout change was needed — the layout was
 verified sound first.
+
+**CI trust lost (2026-09-16 → 2026-09-18), and nobody saw it.** From b96108d on,
+CI was red on every push to `main` — 19 consecutive runs, the last 17
+(9eeadc5 → 40ea7b9) on one test, `reachability @ 1600x1000 › every rail panel is
+reachable by wheel and receives a click` — while this file said "no known
+failing tests". Nothing read CI after a push; there is no `gh` here. D70 is the
+fix and D71 the rule: after every push, read the run for that commit.
 
 **PERFORMANCE IS CLOSED.** The owner's final A/B on the real 2020 M1 MacBook
 Air: dramatically smoother, visual difference tiny and still just as good, and
@@ -38,8 +46,9 @@ D29–D34), and the one recorded browser flake is closed (D35). No live-provider
 call has been made yet — see §1a.
 
 **Authentication is implemented** (§1b) — `/api/interpret` now requires a
-verified identity, and fails closed when unconfigured. Nothing else is open:
-there are no known failing tests and no recorded intermittents.
+verified identity, and fails closed when unconfigured. Locally there are no
+known failing tests and no recorded intermittents; CI is a separate verdict, and
+it was red — see "CI trust lost" above.
 
 Two verifications remain and **neither has been run**, because no credentials
 exist in this environment: a real WorkOS development sign-in, and the Anthropic
@@ -395,7 +404,7 @@ unreviewable ones escalate; the boundary is checked three times because gates ru
 code; and a real run requires an explicit spend ceiling. The docs now state
 plainly that v1 is **supervised**, not sandboxed.
 
-**203 tests, all with fakes**: no OpenAI credential, no Anthropic credential, no
+**237 tests, all with fakes**: no OpenAI credential, no Anthropic credential, no
 network, no live Claude invocation — and they run in CI, before the browser
 stage. A test suite that costs money is one that stops being run.
 
@@ -408,6 +417,22 @@ stage. A test suite that costs money is one that stops being run.
 4. `npm run autopilot -- dry-run --goal "..."` — read what it would do.
 5. One supervised `run`. Watch it. The first run is for deciding whether you
    agree with how it behaves, not for getting work done.
+
+## 1g. Autopilot review packet — two fail-safe false positives (discovered 2026-09-18)
+**MODEL: OPUS.** Both are in `tools/autopilot/git.mjs` and predate D68–D70.
+Both make Autopilot **escalate legitimate work**; neither lets an unreviewed
+byte through, so neither blocks the first supervised run.
+- **`isBinary` splits UTF-8.** It decodes the first 8,000 bytes and treats any
+  U+FFFD as binary, so a text file whose multi-byte character straddles byte
+  8,000 is "binary". Probed: an em dash starting at byte 7,998 or 7,999 ⇒
+  binary; at 8,000 ⇒ text. This repository's docs are dense with `—`, `→`, `≥`.
+- **Untracked paths are C-quoted.** `ls-files --others` runs without `-z`, and
+  git quotes non-ASCII paths (`"\316\206…"`), so such a file comes back
+  `unreadable`. Tracked paths already use `--numstat -z`.
+
+**Acceptance:** a failing test for each first; a UTF-8 decode that treats a
+truncated trailing sequence as incomplete rather than invalid; `ls-files -z`;
+all five gates; docs and D-log in the same commit.
 
 ## 1d. Other candidates (none started)
 - **Live verification.** A real WorkOS development sign-in, the Anthropic smoke
@@ -445,6 +470,11 @@ across all three viewports in 31s; `src/App.css` restored byte-identical. The
 previously flaky viewport then ran **12 consecutive times clean** (36/36), and
 the full browser suite is green. No assertion was weakened and no product code
 changed.
+
+**Locally.** On CI this exact test kept failing on every push after D35: on a
+GitHub runner the live feed grew the rail past the bounded settle-wait. D70
+freezes the feed wherever layout is measured; the CI run for the commit that
+carries it is what closes this, not a local pass (D71).
 
 ## 2. (closed) The four red browser specs — triaged, and one was a real bug
 Found at b96108d, fixed at the checkpoint below. They were **not** all stale, and

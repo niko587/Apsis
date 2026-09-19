@@ -969,8 +969,18 @@ the controller has not accepted). Binary files and files over the byte budget ar
 NOT summarised into acceptability: they come back in `unreviewable`, the packet
 tells the reviewer explicitly what it has not seen, and the controller escalates
 regardless of the verdict.
+**Corrected the same day.** The first implementation fixed untracked files and
+left tracked ones as one blob: `git diff BASE --` for everything, then a slice at
+the global budget. A large tracked diff, a tracked binary modification, or simply
+enough tracked changes could hand Astra half a file with nothing in
+`unreviewable` naming it. The rule is per FILE, not per provenance — every
+changed path (modification, addition, deletion, rename, untracked addition) is
+now enumerated from `git diff --numstat -z` and budgeted individually. `-z`
+because a path may contain a newline and a parser that splits on one gets the
+wrong file. Binary is git's own `-	-` verdict for tracked paths.
 Forbids: describing a file as reviewed when its contents were not in the packet;
-staging to produce a diff; silent truncation.
+staging to produce a diff; silent truncation; treating "tracked" as a single
+reviewable unit.
 
 ## D66 — Three boundary checks, because gates run code
 The order was worker → boundary → gates → review → `git add -A`. A gate RUNS
@@ -1008,3 +1018,90 @@ kind of code that must not drift untested.
 Forbids: describing v1 as sandboxed or container-isolated; running it unattended
 on a repository the owner does not trust; a CI configuration that omits
 `autopilot:test`.
+
+## D68 — The pre-commit check compares BYTES, not filenames
+The final protection compared the changed FILE SET, which catches a file
+appearing or disappearing between review and commit. It is blind to the case
+that matters most: `foo.ts` reviewed as version A, `foo.ts` committed as version
+B. Same name, same set, different bytes — a review TOCTOU gap that no comparison
+of names can close. A worker still finishing a write, a gate touching a source
+file, an editor saving in the background: each produces a commit the reviewer
+never saw, and each looked clean.
+`reviewFingerprint()` hashes the review representation itself — sorted file list,
+the complete diff text, and the unreviewable metadata (including the REASON a
+file was unreviewable, since that is part of what the verdict was based on) —
+with SHA-256. The controller records it when the packet is built and rebuilds it
+from the worktree immediately before committing. Different ⇒ `content-drift` ⇒
+escalate, commit nothing.
+This is why `reviewDiff` sorts its entries: a fingerprint over a
+non-deterministic representation would fail at random and mean nothing.
+Forbids: committing bytes that were not the bytes reviewed; a file-name
+comparison presented as a content guarantee; a non-deterministic review
+representation.
+
+## D69 — A configuration value that does nothing is worse than none
+`APSIS_AUTOPILOT_MAX_REPAIRS` was read, stored in `config.maxRepairCycles`, and
+then ignored: the loop read `taskSpec.maxRepairCycles`, so an owner who set 1 got
+whatever the planner asked for. The knob was documented, believable, and inert —
+which is worse than absent, because an absent knob does not get trusted.
+The effective limit is now
+`min(TaskSpec.maxRepairCycles, config.maxRepairCycles, MAX_REPAIR_CYCLES)`. The
+owner can always tighten; neither the owner nor the planner can exceed the system
+ceiling. The three inputs and the result are recorded, and the repair prompt
+quotes the EFFECTIVE limit — telling a worker it has three turns when it has one
+is a lie the worker will plan around.
+Forbids: exposing configuration the code does not consult; a planner-supplied
+limit overriding an owner-supplied one.
+
+## D70 — Layout tests measure a document that has stopped moving
+`reachability.spec.ts` booted with the event feed live and then tried to decide
+where the rail's content finally settles. Measured at 1600x1000: with the feed on
+the rail's `scrollHeight` went 1633 → 1719 → 1761 (+128px in six seconds); with
+`feed=off` it held at 1549 across twelve samples. `wheelIntoView` handles a
+growing document — it waits for the extent to settle and wheels into the new
+room — but the wait is bounded, and must be, since an unbounded wait for a
+document that never stops growing is a hang. On a GitHub runner the bound was
+reached first and the suite reported the last panel below the fold
+(`top=1002 bottom=1013 viewportH=1000`).
+That verdict was never about layout: jamming the rail to its maximum with the
+feed ON puts the same heading at `top=731` in a 1000px viewport. The page was
+fine; the measurement was taken of a moving target.
+So the feed is frozen where the question is "can a user reach this", and nowhere
+else — live-feed behaviour has its own specs. Nothing was weakened to achieve it:
+no tolerance, no stall counter, no `scrollIntoView`, no Playwright auto-scroll,
+still real wheel events, still `elementFromPoint`, still real clicks, still three
+viewports. Re-proved by restoring `overflow-y: hidden` on `.rail`, which turns 7
+of 11 red across all three viewports, then restoring `src/App.css` byte-identically
+(sha256 `3be0155…`).
+`bootApp` now ASSERTS both preconditions rather than assuming them: that the
+rail's extent has settled (so removing `feed=off` fails with "still growing"
+rather than an unreachable-panel verdict two hundred lines away), and that the
+rail still overflows by >200px at 1600x1000 (so a shorter rail cannot make
+"every panel is reachable" true for free).
+Forbids: measuring final layout against a live event feed; pixel slop, stall
+counters, `scrollIntoView` or auto-scroll as reachability evidence; removing the
+1600x1000 viewport.
+
+## D71 — CI is read after every push, never inferred from a local run
+(2026-09-18) CI on `main` was red for 19 consecutive pushes, b96108d
+(2026-09-16) through 40ea7b9 (2026-09-18). The first two failed on the specs
+9eeadc5 fixed; all 17 after that failed on one and the same test,
+`reachability @ 1600x1000 › every rail panel is reachable by wheel and receives
+a click`. Throughout, these docs said "no known failing tests", and D35 called
+the flake closed on the strength of twelve clean LOCAL runs. Nothing was hiding
+the failure — every run carried a Playwright annotation naming the test and the
+panel. Nothing looked: there is no `gh` on this machine, and no step of the
+protocol said to.
+A local run cannot stand in for the runner. The runner has a different CPU,
+different fonts and no GPU; and locally Playwright reuses whatever server is
+already listening on 4173 (`reuseExistingServer` is off only under `CI`), so a
+preview server left behind by an earlier session is tested as-is.
+So after every push, read the run for the pushed commit. The repository is
+public; no credential is needed:
+    curl -s "https://api.github.com/repos/niko587/Apsis/actions/runs?head_sha=<sha>"
+    → /actions/runs/<run id>/jobs          which step failed
+    → /check-runs/<job id>/annotations     which test, with its error
+Unauthenticated calls are capped at 60 an hour; one failed run costs three.
+Forbids: calling CI green, or a CI failure fixed, without having read the run
+for that commit; "no known failing tests" in these docs while the latest run on
+`main` is red.

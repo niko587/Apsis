@@ -1,7 +1,8 @@
 # Current State
 
-_Last updated: 2026-09-18 (Autopilot pre-live safety closeout;
-previous phase: dynamic drill closeout + Autopilot v1)_
+_Last updated: 2026-09-18 (Autopilot review-integrity + CI reachability closeout,
+and the CI record corrected — D71; previous phase: Autopilot pre-live safety
+closeout)_
 
 This file is the snapshot an external AI project manager should trust over any
 conversation history. It describes the repository as it actually is.
@@ -15,9 +16,10 @@ conversation history. It describes the repository as it actually is.
 | Browser suite | **82 / 82 passing** | `npm run test:e2e` |
 | Lint | exit 0 (warnings only, see below) | `npm run lint` |
 | Production build | green, ~1.27 MB bundle (350 KB gz) | `npm run build` |
-| Autopilot tests | **203 / 203 passing**, no credential, no network | `npm run autopilot:test` |
+| Autopilot tests | **237 / 237 passing**, no credential, no network | `npm run autopilot:test` |
 | Runtime console | 0 errors at load and through drill/command flows | — |
 | All five gates | the set CI runs | `npm run check` |
+| CI on GitHub | **red on `main` for 19 consecutive pushes** (b96108d → 40ea7b9); the fix is D70, and only the run for the commit carrying it can say it worked | public API — see "Git / GitHub state" |
 
 Run locally: `npm install && npm run dev` (port 5173) or
 `npx vite preview --port 4173` after a build. URL params: `?leads=N` book
@@ -25,7 +27,10 @@ size, `?fx=off` disables post-processing. Playwright needs browsers once:
 `npx playwright install chromium`.
 
 **CI**: `.github/workflows/ci.yml` runs all five gates on push and PR to
-`main`. Badge in `README.md`.
+`main`. Badge in `README.md`. **Local green is not CI green** (D71): CI was red
+on every push from b96108d (2026-09-16) to 40ea7b9 (2026-09-18) while this file
+said otherwise. After a push, read the run for that commit — how, without `gh`,
+is under "Git / GitHub state".
 
 ## What works end to end (all verified this session)
 
@@ -239,8 +244,9 @@ Implementation is the contract's shape (`docs/CONTRACT_14_SPATIAL_INDIVIDUAL.md`
 
 ## In flight right now
 
-Nothing mid-edit. The working tree is consistent and all checks are green.
-The next planned work is in `NEXT_ACTIONS.md`.
+Nothing mid-edit. All five gates pass locally. CI on `main` counts as green only
+once the run for the commit carrying D70 says so (D71). The next planned work is
+in `NEXT_ACTIONS.md`.
 
 ## Git / GitHub state
 
@@ -254,6 +260,17 @@ tracking.** Bootstrapped 2026-09-15; `NEXT_ACTIONS.md` item 1 is closed.
   at `~/.npm-global/bin/git` (`git 2.53.0`, real binary under
   `~/.local/gittools/node_modules/dugite/git`). There is still no system git
   and no `gh` CLI.
+- **Reading CI without `gh`** (D71). The repository is public, so the REST API
+  answers without a credential:
+  `curl -s "https://api.github.com/repos/niko587/Apsis/actions/runs?head_sha=<sha>"`
+  gives the run, `/actions/runs/<run id>/jobs` says which step failed, and
+  `/check-runs/<job id>/annotations` names the failing test with its error —
+  Playwright's `github` reporter writes one annotation per failure.
+  Unauthenticated calls are capped at 60 an hour. **What this would have
+  caught:** 19 consecutive red pushes — b96108d and e9d0ee8 on the specs that
+  9eeadc5 fixed, then 17 runs (9eeadc5 → 40ea7b9) on one test, `reachability @
+  1600x1000 › every rail panel is reachable by wheel and receives a click`.
+  D35's fix passed locally and changed nothing on the runner; D70 is the fix.
 - **Auth is SSH, not HTTPS.** The remote is `git@github.com:niko587/Apsis.git`.
   An ed25519 key sits at `~/.ssh/id_ed25519` (no passphrase, so pushes are
   unattended); `github.com` is pinned in `~/.ssh/known_hosts` with the
@@ -314,9 +331,12 @@ the reference control.
 - **Core animation smoothness on real GPU** — the fix is structurally sound
   and renders correctly, but motion-at-speed was only assessable by the human.
   Awaiting user confirmation.
-- `oxlint` emits ~20 warnings in `src/universe/LeadField.tsx` (refs during
-  render / hook-argument mutation). These are R3F frame-loop idioms, not bugs;
-  they are the accepted cost of a zero-allocation render path.
+- `oxlint` exits 0 with **56 warnings**, an unchanged baseline. 40 are
+  hook-argument mutation and refs during render in `src/universe/` (26 in
+  `LeadField.tsx`) — R3F frame-loop idioms, not bugs, and the accepted cost of a
+  zero-allocation render path. The other 16 (6 in `src/universe/`, 10 in
+  `src/ui/`: `exhaustive-deps`, `purity`, `set-state-in-effect`,
+  `only-export-components`) have not been triaged individually.
 - First drill level is population-imbalanced by design (South 1,695 vs
   Midwest 924) — that is the real shape of the data, not a bug.
 
@@ -583,7 +603,36 @@ on a trusted repository; unattended autonomy needs a real execution sandbox
 first, and that is separate work (D67). The Autopilot suite now runs in CI,
 before the browser stage.
 
-**Verified with fakes, deliberately.** All 203 tests run with no OpenAI
+**Review-integrity + CI closeout (D65 amended, D68–D70).** Four more:
+
+- **The reachability suite measured a moving target.** It booted with the event
+  feed live, so the rail's scroll extent grew under the measurement
+  (1633→1761px in six seconds; `feed=off` holds at 1549 across twelve samples).
+  On a GitHub runner the bounded settle-wait was exhausted first and the suite
+  reported the last panel below the fold — a verdict that was never about
+  layout, since jamming the rail to its maximum with the feed ON puts the same
+  heading at `top=731` in a 1000px viewport. Layout tests now freeze the feed,
+  and `bootApp` asserts both preconditions (extent settled; rail still
+  overflows). **Nothing weakened**: re-proved by restoring `overflow-y: hidden`
+  on `.rail` — 7 of 11 red across all three viewports — then restoring
+  `src/App.css` byte-identically (D70).
+- **Tracked files were one blob.** `reviewDiff` inlined untracked files but ran
+  one `git diff BASE --` for everything tracked and sliced at the global budget,
+  so a large tracked diff or a tracked binary change could hand Astra half a
+  file with nothing naming it. Every changed path — modification, addition,
+  deletion, rename, untracked — is now enumerated from `git diff --numstat -z`
+  and budgeted individually. Either complete, or in `unreviewable`; no third
+  state (D65 amended).
+- **The pre-commit check compared filenames.** `foo.ts` reviewed as version A
+  and committed as version B passed it perfectly. A SHA-256 fingerprint over the
+  review representation is recorded at review time and rebuilt before the
+  commit; different ⇒ `content-drift` ⇒ nothing is committed (D68).
+- **`APSIS_AUTOPILOT_MAX_REPAIRS` did nothing.** The loop read the TaskSpec's
+  number, so an owner who set 1 got whatever the planner asked for. The
+  effective limit is the minimum of owner, planner and system ceiling, recorded
+  with all three inputs (D69).
+
+**Verified with fakes, deliberately.** All 237 tests run with no OpenAI
 credential, no Anthropic credential, no network and no live Claude invocation.
 **No live OpenAI call has been made and no nested Claude coding run has been
 started** — there is no key in this environment, and the tool has not been

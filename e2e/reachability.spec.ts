@@ -26,8 +26,43 @@
 
 import { test, expect, type Locator, type Page } from '@playwright/test';
 
-/** Small book, no post-processing: this suite tests layout, not throughput. */
-const APP = '/?leads=400&fx=off';
+/**
+ * Small book, no post-processing, **and no event feed**: this suite tests
+ * layout, not throughput.
+ *
+ * WHY THE FEED IS OFF — the root cause of a standing CI failure.
+ *
+ * The rail was a LIVING DOCUMENT while this suite was trying to decide where
+ * its content finally settles. Measured at 1600x1000 on the full boot:
+ *
+ *     feed on   scrollHeight 1633 → 1719 → 1761   (+128px over six seconds)
+ *     feed off  scrollHeight 1549 … 1549          (zero change, twelve samples)
+ *
+ * The activity feed gains rows and appointments land, so the rail's scroll
+ * extent kept growing underneath the measurement. `wheelIntoView` handles that
+ * — it waits for the extent to settle and wheels into the new room — but the
+ * wait is BOUNDED (five settle windows, forty ticks), and it has to be: an
+ * unbounded wait for a document that never stops growing is a hang. On a busy
+ * GitHub runner with different font metrics the bound was reached before the
+ * rail stopped moving, and the suite reported the last panel just below the
+ * fold (`top=1002 bottom=1013 viewportH=1000`).
+ *
+ * That verdict was never about layout. Jamming the rail to its maximum with the
+ * feed ON puts the Activity heading at `top=731` in a 1000px viewport — fully
+ * on screen. The page was fine; the measurement was taken of a moving target.
+ *
+ * So the feed is frozen HERE, where the question is "can a user reach this",
+ * and nowhere else. The live feed is exercised by its own specs. Note what this
+ * does NOT do: nothing is slower, no tolerance is added, no assertion is
+ * loosened, and every wheel/hit-test/click guarantee below is unchanged. The
+ * Activity panel still renders (99px instead of 269px), and the rail still
+ * overflows by 605px at the viewport D12 was found at — both asserted in
+ * `bootApp` so that removing `feed=off` fails loudly rather than flaking.
+ *
+ * `pointing at a lead row does not move it`, further down, already froze the
+ * feed for exactly this reason.
+ */
+const APP = '/?leads=400&fx=off&feed=off';
 
 /**
  * The nine rail panels, by their `h2` accessible name.
@@ -188,9 +223,9 @@ async function scrollExtentSettled(page: Page, rail: Locator): Promise<boolean> 
  * WHY THIS NO LONGER COUNTS STALLS.
  *
  * It used to treat three consecutive no-movement ticks as "cannot scroll
- * farther". That conflates two different states, and the rail is a LIVING
- * document — the activity feed gains rows, appointments land — so the wrong one
- * kept happening: the rail sat at its current maximum when a tick fired, the
+ * farther". That conflates two different states, and the rail was a LIVING
+ * document when this suite ran — the activity feed gains rows, appointments
+ * land — so the wrong one kept happening: the rail sat at its current maximum when a tick fired, the
  * helper banked a stall, the feed then added a row, `scrollHeight` grew, and by
  * the time the target was reachable the helper had already given up. One
  * observed failure had the last panel at `top=1028` in a 1000px viewport with
@@ -211,6 +246,12 @@ async function scrollExtentSettled(page: Page, rail: Locator): Promise<boolean> 
  *
  * No assertion is weakened: the caller still requires the click point to be on
  * screen, the hit test to resolve to the target, and a real click to land.
+ *
+ * The settle logic is KEPT even though this suite now boots with `feed=off` and
+ * the rail no longer grows. It costs nothing on a static document — the first
+ * three samples agree — and it is the part that distinguishes "cannot scroll"
+ * from "not finished growing". Deleting it because the current boot flags make
+ * it unnecessary would remove the distinction, not the cost.
  */
 async function wheelIntoView(
   page: Page,
@@ -266,6 +307,41 @@ async function bootApp(page: Page, width: number, height: number) {
   // The rail renders from the seeded book, so waiting on a panel that carries a
   // live count means waiting for real state rather than an arbitrary sleep.
   await expect(page.getByRole('heading', { name: /^Leads\b/ })).toBeVisible();
+
+  /**
+   * Two preconditions, asserted rather than assumed, because both are the
+   * reason `feed=off` is safe to use here.
+   *
+   * 1. THE LAYOUT IS FINAL. Three agreeing samples of the rail's scroll extent.
+   *    If someone removes `feed=off` later, this fails with "the rail is still
+   *    growing" instead of producing an unreachable-panel verdict two hundred
+   *    lines away that looks like a product defect.
+   *
+   * 2. THE SUITE IS NOT VACUOUS. Freezing the feed makes the rail shorter, and
+   *    a rail that no longer overflows would make "every panel is reachable"
+   *    true for free. At the viewport D12 was found at, it must still overflow.
+   */
+  const rail = page.locator('.rail');
+  await expect(rail).toBeVisible();
+
+  let last = -1;
+  let agreed = 0;
+  for (let i = 0; i < 20 && agreed < 3; i++) {
+    const height = await rail.evaluate((el) => el.scrollHeight);
+    agreed = height === last ? agreed + 1 : 0;
+    last = height;
+    await page.waitForTimeout(SETTLE_SAMPLE_MS);
+  }
+  expect(agreed, 'the rail must reach a final layout before reachability is measured').toBeGreaterThanOrEqual(3);
+
+  if (width === 1600 && height === 1000) {
+    const metrics = await railMetrics(rail);
+    expect(
+      metrics.scrollHeight,
+      `the rail must still overflow at 1600x1000, or this suite proves nothing ` +
+        `(content ${metrics.scrollHeight}px in ${metrics.clientHeight}px)`,
+    ).toBeGreaterThan(metrics.clientHeight + 200);
+  }
 }
 
 for (const vp of VIEWPORTS) {

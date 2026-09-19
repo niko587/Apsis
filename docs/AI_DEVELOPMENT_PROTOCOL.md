@@ -84,6 +84,10 @@ After **every meaningful development phase**:
 5. Commit docs **together with** the implementation they describe; push to
    `main` at `git@github.com:niko587/Apsis.git` (SSH — see D19; do not switch
    the remote to HTTPS, this machine's git has no CA bundle).
+6. **Read the CI run for the commit you pushed** (D71). Local green is not CI
+   green, and there is no `gh` here — the public API needs no credential; the
+   calls are in `CURRENT_STATE.md` → "Git / GitHub state". Do not write "no
+   known failing tests" while the latest run on `main` is red.
 
 Commit style: imperative subject, body says why, ends with
 `Co-Authored-By: Claude <model> <noreply@anthropic.com>`. Do not commit
